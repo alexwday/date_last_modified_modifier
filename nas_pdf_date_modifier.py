@@ -145,28 +145,88 @@ class NASConnection:
             raise Exception("Not connected to NAS")
         
         try:
-            timestamp = int(modified_time.timestamp())
+            # Convert to Windows FILETIME format (100-nanosecond intervals since 1601)
+            # This is what SMB expects for timestamps
+            import calendar
+            timestamp = calendar.timegm(modified_time.timetuple())
             
-            # Try SMB2 setPathInfo first
-            self.connection.setPathInfo(
-                self.share_name,
-                remote_path,
-                last_write_time=timestamp
-            )
-            return True
-        except Exception as e:
-            # Fallback: download, modify locally, re-upload
+            # Create a temporary file with modified metadata
             temp_path = tempfile.mktemp(suffix='.pdf')
+            temp_modified_path = tempfile.mktemp(suffix='_modified.pdf')
+            
             try:
+                # Download the original file
                 self.download_file(remote_path, temp_path)
-                os.utime(temp_path, (timestamp, timestamp))
-                self.upload_file(temp_path, remote_path)
+                
+                # Open with PyMuPDF and update metadata
+                import fitz
+                pdf_doc = fitz.open(temp_path)
+                
+                # Update PDF metadata with the new date
+                metadata = pdf_doc.metadata
+                if metadata is None:
+                    metadata = {}
+                
+                # Format date for PDF metadata (D:YYYYMMDDHHmmSS)
+                pdf_date = modified_time.strftime("D:%Y%m%d%H%M%S")
+                metadata['modDate'] = pdf_date
+                metadata['creationDate'] = pdf_date  # Also update creation date
+                
+                # Set the metadata
+                pdf_doc.set_metadata(metadata)
+                
+                # Save the modified PDF
+                pdf_doc.save(temp_modified_path)
+                pdf_doc.close()
+                
+                # Set file system timestamps on the local file
+                os.utime(temp_modified_path, (timestamp, timestamp))
+                
+                # Delete the original file on NAS first
+                try:
+                    self.connection.deleteFiles(self.share_name, remote_path)
+                except:
+                    pass  # File might not exist or permission issue
+                
+                # Upload the modified file with preserved timestamps
+                with open(temp_modified_path, 'rb') as local_file:
+                    # Use storeFile with explicit timestamp
+                    self.connection.storeFile(
+                        self.share_name,
+                        remote_path,
+                        local_file,
+                        write_time=timestamp
+                    )
+                
+                # Try to set the timestamp again after upload
+                try:
+                    self.connection.setPathInfo(
+                        self.share_name,
+                        remote_path,
+                        write_time=timestamp,
+                        access_time=timestamp,
+                        change_time=timestamp,
+                        creation_time=timestamp
+                    )
+                except:
+                    # Some NAS devices don't support this, but that's okay
+                    pass
+                
                 return True
-            except Exception as upload_error:
-                raise Exception(f"Failed to set file time: {str(upload_error)}")
+                
+            except Exception as e:
+                raise Exception(f"Failed to modify PDF date: {str(e)}")
             finally:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+                # Clean up temporary files
+                for path in [temp_path, temp_modified_path]:
+                    if os.path.exists(path):
+                        try:
+                            os.remove(path)
+                        except:
+                            pass
+                            
+        except Exception as e:
+            raise Exception(f"Failed to set file time: {str(e)}")
 
 
 class ConnectionThread(QThread):
@@ -361,6 +421,11 @@ class PDFViewerApp(QMainWindow):
         self.connect_button = QPushButton("Connect")
         self.connect_button.clicked.connect(self.connect_to_nas)
         button_row.addWidget(self.connect_button)
+        
+        self.refresh_button = QPushButton("Refresh Files")
+        self.refresh_button.clicked.connect(lambda: self.refresh_file_list(self.current_file_index))
+        self.refresh_button.setEnabled(False)
+        button_row.addWidget(self.refresh_button)
         
         self.connection_status_label = QLabel("Disconnected")
         button_row.addWidget(self.connection_status_label)
@@ -589,6 +654,7 @@ class PDFViewerApp(QMainWindow):
         
         self.connect_button.setText("Disconnect")
         self.connect_button.setEnabled(True)
+        self.refresh_button.setEnabled(True)
         self.connection_status_label.setText("Connected")
         self.connection_status_label.setStyleSheet("color: green; font-weight: bold;")
         
@@ -616,6 +682,7 @@ class PDFViewerApp(QMainWindow):
         
         self.connection_status = False
         self.connect_button.setText("Connect")
+        self.refresh_button.setEnabled(False)
         self.connection_status_label.setText("Disconnected")
         self.connection_status_label.setStyleSheet("color: red;")
         
@@ -827,6 +894,8 @@ class PDFViewerApp(QMainWindow):
     def on_modify_success(self, new_date):
         # Update file info
         current_item = self.file_list.currentItem()
+        current_index = self.current_file_index
+        
         if isinstance(current_item, FileListItem):
             current_item.file_info['modified'] = new_date
             current_item.update_display()
@@ -834,8 +903,50 @@ class PDFViewerApp(QMainWindow):
         self.current_date_label.setText(new_date.strftime('%Y-%m-%d %H:%M:%S'))
         self.statusBar().showMessage(f"Date modified successfully to {new_date.strftime('%Y-%m-%d %H:%M:%S')}")
         
+        # Refresh the file list to verify the change
+        self.refresh_file_list(current_index)
+        
         # Auto-advance to next file after a short delay
-        QTimer.singleShot(1000, self.next_file)
+        QTimer.singleShot(1500, self.next_file)
+    
+    def refresh_file_list(self, maintain_index=None):
+        """Refresh the file list from the NAS to show actual dates."""
+        if not self.nas_connection:
+            return
+            
+        try:
+            # Get the current path
+            base_path = self.base_path_input.text()
+            folder = self.folder_input.text()
+            
+            if base_path and folder:
+                full_path = os.path.join(base_path, folder)
+            elif base_path:
+                full_path = base_path
+            elif folder:
+                full_path = folder
+            else:
+                full_path = '/'
+            
+            if not full_path.startswith('/'):
+                full_path = '/' + full_path
+            
+            # Reload files from NAS
+            files = self.nas_connection.list_pdf_files(full_path)
+            self.pdf_files = files
+            
+            # Update the list widget
+            self.file_list.clear()
+            for file_info in files:
+                item = FileListItem(file_info)
+                self.file_list.addItem(item)
+            
+            # Restore selection if needed
+            if maintain_index is not None and maintain_index < len(files):
+                self.file_list.setCurrentRow(maintain_index)
+                
+        except Exception as e:
+            print(f"Error refreshing file list: {e}")
     
     def on_modify_error(self, error_msg):
         QMessageBox.critical(self, "Modification Error", f"Failed to modify date: {error_msg}")
