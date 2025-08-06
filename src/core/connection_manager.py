@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+"""
+Robust SMB connection manager with retry logic, connection pooling, and health checks.
+"""
+
+import time
+import threading
+from typing import Optional, Dict, Any, List, Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from contextlib import contextmanager
+import socket
+
+from smb.SMBConnection import SMBConnection
+from smb.smb_structs import OperationFailure
+
+from .logging_config import get_logger, log_exception
+
+
+@dataclass
+class ConnectionConfig:
+    """Configuration for SMB connection."""
+    nas_ip: str
+    username: str
+    password: str
+    share_name: str
+    domain: str = ''
+    port: int = 445
+    use_ntlm_v2: bool = True
+    is_direct_tcp: bool = True
+    timeout: int = 30
+    max_retries: int = 3
+    retry_delay: float = 1.0
+    retry_backoff: float = 2.0
+    keepalive_interval: int = 60
+    max_idle_time: int = 300
+
+
+class ConnectionHealth:
+    """Track connection health metrics."""
+    
+    def __init__(self):
+        self.last_success: Optional[datetime] = None
+        self.last_failure: Optional[datetime] = None
+        self.consecutive_failures: int = 0
+        self.total_requests: int = 0
+        self.total_failures: int = 0
+        self.total_retries: int = 0
+        self.average_response_time: float = 0.0
+        self._response_times: List[float] = []
+        self._lock = threading.Lock()
+    
+    def record_success(self, response_time: float):
+        """Record a successful operation."""
+        with self._lock:
+            self.last_success = datetime.now()
+            self.consecutive_failures = 0
+            self.total_requests += 1
+            self._response_times.append(response_time)
+            if len(self._response_times) > 100:
+                self._response_times.pop(0)
+            self.average_response_time = sum(self._response_times) / len(self._response_times)
+    
+    def record_failure(self):
+        """Record a failed operation."""
+        with self._lock:
+            self.last_failure = datetime.now()
+            self.consecutive_failures += 1
+            self.total_failures += 1
+            self.total_requests += 1
+    
+    def record_retry(self):
+        """Record a retry attempt."""
+        with self._lock:
+            self.total_retries += 1
+    
+    def is_healthy(self) -> bool:
+        """Check if connection is considered healthy."""
+        with self._lock:
+            if self.consecutive_failures >= 5:
+                return False
+            if self.last_failure and self.last_success:
+                if self.last_failure > self.last_success:
+                    time_since_failure = datetime.now() - self.last_failure
+                    if time_since_failure < timedelta(seconds=30):
+                        return False
+            return True
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get health statistics."""
+        with self._lock:
+            return {
+                'last_success': self.last_success.isoformat() if self.last_success else None,
+                'last_failure': self.last_failure.isoformat() if self.last_failure else None,
+                'consecutive_failures': self.consecutive_failures,
+                'total_requests': self.total_requests,
+                'total_failures': self.total_failures,
+                'total_retries': self.total_retries,
+                'success_rate': (self.total_requests - self.total_failures) / self.total_requests if self.total_requests > 0 else 0,
+                'average_response_time': self.average_response_time,
+                'is_healthy': self.is_healthy()
+            }
+
+
+class SMBConnectionPool:
+    """Connection pool for managing multiple SMB connections."""
+    
+    def __init__(self, config: ConnectionConfig, pool_size: int = 3):
+        self.config = config
+        self.pool_size = pool_size
+        self.connections: List[Optional[SMBConnection]] = [None] * pool_size
+        self.connection_locks: List[threading.Lock] = [threading.Lock() for _ in range(pool_size)]
+        self.last_used: List[datetime] = [datetime.min for _ in range(pool_size)]
+        self.health_trackers: List[ConnectionHealth] = [ConnectionHealth() for _ in range(pool_size)]
+        self.logger = get_logger(__name__)
+        self._shutdown = False
+        
+        # Start keepalive thread
+        self.keepalive_thread = threading.Thread(target=self._keepalive_worker, daemon=True)
+        self.keepalive_thread.start()
+    
+    def _create_connection(self, client_name: str = None) -> SMBConnection:
+        """Create a new SMB connection."""
+        client_name = client_name or f"PDF_MOD_{id(self)}"
+        
+        conn = SMBConnection(
+            self.config.username,
+            self.config.password,
+            client_name,
+            self.config.nas_ip,
+            domain=self.config.domain,
+            use_ntlm_v2=self.config.use_ntlm_v2,
+            is_direct_tcp=self.config.is_direct_tcp
+        )
+        
+        # Set socket timeout
+        conn.sock_timeout = self.config.timeout
+        
+        return conn
+    
+    def _connect(self, conn: SMBConnection) -> bool:
+        """Establish SMB connection with retries."""
+        delay = self.config.retry_delay
+        
+        for attempt in range(self.config.max_retries):
+            try:
+                self.logger.debug(f"Connection attempt {attempt + 1}/{self.config.max_retries}")
+                
+                success = conn.connect(self.config.nas_ip, self.config.port, timeout=self.config.timeout)
+                
+                if success:
+                    self.logger.info(f"Successfully connected to {self.config.nas_ip}")
+                    return True
+                else:
+                    self.logger.warning(f"Authentication failed for {self.config.nas_ip}")
+                    
+            except socket.timeout:
+                self.logger.warning(f"Connection timeout on attempt {attempt + 1}")
+            except socket.error as e:
+                self.logger.warning(f"Socket error on attempt {attempt + 1}: {e}")
+            except Exception as e:
+                self.logger.error(f"Unexpected error on attempt {attempt + 1}: {e}")
+            
+            if attempt < self.config.max_retries - 1:
+                self.logger.info(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
+                delay *= self.config.retry_backoff
+        
+        return False
+    
+    @contextmanager
+    def get_connection(self):
+        """Get a connection from the pool."""
+        start_time = time.time()
+        connection_index = -1
+        connection = None
+        
+        try:
+            # Find an available connection
+            max_wait = 30
+            wait_start = time.time()
+            
+            while time.time() - wait_start < max_wait:
+                for i in range(self.pool_size):
+                    if self.connection_locks[i].acquire(blocking=False):
+                        connection_index = i
+                        break
+                
+                if connection_index >= 0:
+                    break
+                    
+                time.sleep(0.1)
+            
+            if connection_index < 0:
+                raise TimeoutError("No available connections in pool")
+            
+            # Check if connection needs to be created or refreshed
+            if (self.connections[connection_index] is None or 
+                datetime.now() - self.last_used[connection_index] > timedelta(seconds=self.config.max_idle_time)):
+                
+                # Close old connection if exists
+                if self.connections[connection_index]:
+                    try:
+                        self.connections[connection_index].close()
+                    except:
+                        pass
+                
+                # Create new connection
+                self.logger.debug(f"Creating new connection for slot {connection_index}")
+                conn = self._create_connection(f"PDF_MOD_{connection_index}")
+                
+                if not self._connect(conn):
+                    raise ConnectionError(f"Failed to connect after {self.config.max_retries} attempts")
+                
+                self.connections[connection_index] = conn
+            
+            connection = self.connections[connection_index]
+            self.last_used[connection_index] = datetime.now()
+            
+            # Test connection health
+            try:
+                connection.echo(b"ping")
+            except:
+                # Connection is dead, recreate it
+                self.logger.warning(f"Connection {connection_index} failed health check, recreating...")
+                conn = self._create_connection(f"PDF_MOD_{connection_index}")
+                
+                if not self._connect(conn):
+                    raise ConnectionError("Failed to recreate connection")
+                
+                self.connections[connection_index] = conn
+                connection = conn
+            
+            # Record success
+            response_time = time.time() - start_time
+            self.health_trackers[connection_index].record_success(response_time)
+            
+            yield connection
+            
+        except Exception as e:
+            if connection_index >= 0:
+                self.health_trackers[connection_index].record_failure()
+            log_exception(self.logger, e, {'operation': 'get_connection'})
+            raise
+            
+        finally:
+            if connection_index >= 0:
+                self.connection_locks[connection_index].release()
+    
+    def _keepalive_worker(self):
+        """Background worker to maintain connection health."""
+        while not self._shutdown:
+            try:
+                time.sleep(self.config.keepalive_interval)
+                
+                for i in range(self.pool_size):
+                    if self.connection_locks[i].acquire(blocking=False):
+                        try:
+                            if self.connections[i] and datetime.now() - self.last_used[i] < timedelta(seconds=self.config.max_idle_time):
+                                try:
+                                    self.connections[i].echo(b"keepalive")
+                                    self.logger.debug(f"Keepalive successful for connection {i}")
+                                except:
+                                    self.logger.warning(f"Keepalive failed for connection {i}")
+                                    try:
+                                        self.connections[i].close()
+                                    except:
+                                        pass
+                                    self.connections[i] = None
+                        finally:
+                            self.connection_locks[i].release()
+                            
+            except Exception as e:
+                self.logger.error(f"Keepalive worker error: {e}")
+    
+    def execute_with_retry(self, operation: Callable, *args, **kwargs):
+        """Execute an operation with automatic retry on failure."""
+        last_exception = None
+        delay = self.config.retry_delay
+        
+        for attempt in range(self.config.max_retries):
+            try:
+                with self.get_connection() as conn:
+                    result = operation(conn, *args, **kwargs)
+                    return result
+                    
+            except OperationFailure as e:
+                last_exception = e
+                self.logger.warning(f"Operation failed (attempt {attempt + 1}): {e}")
+                
+                # Don't retry on certain errors
+                if "STATUS_ACCESS_DENIED" in str(e) or "STATUS_OBJECT_NAME_NOT_FOUND" in str(e):
+                    raise
+                    
+            except Exception as e:
+                last_exception = e
+                self.logger.warning(f"Operation error (attempt {attempt + 1}): {e}")
+            
+            if attempt < self.config.max_retries - 1:
+                self.logger.info(f"Retrying operation in {delay} seconds...")
+                time.sleep(delay)
+                delay *= self.config.retry_backoff
+        
+        raise last_exception or Exception("Operation failed after all retries")
+    
+    def get_health_stats(self) -> Dict[str, Any]:
+        """Get health statistics for all connections."""
+        return {
+            f"connection_{i}": self.health_trackers[i].get_stats()
+            for i in range(self.pool_size)
+        }
+    
+    def close_all(self):
+        """Close all connections in the pool."""
+        self._shutdown = True
+        
+        for i in range(self.pool_size):
+            with self.connection_locks[i]:
+                if self.connections[i]:
+                    try:
+                        self.connections[i].close()
+                        self.logger.info(f"Closed connection {i}")
+                    except Exception as e:
+                        self.logger.error(f"Error closing connection {i}: {e}")
+                    finally:
+                        self.connections[i] = None
+
+
+class ConnectionManager:
+    """High-level connection manager with simplified interface."""
+    
+    def __init__(self, config: ConnectionConfig):
+        self.config = config
+        self.pool = SMBConnectionPool(config)
+        self.logger = get_logger(__name__)
+        
+    def test_connection(self) -> bool:
+        """Test if connection can be established."""
+        try:
+            with self.pool.get_connection() as conn:
+                # Try to list root directory
+                conn.listPath(self.config.share_name, '/')
+                return True
+        except Exception as e:
+            self.logger.error(f"Connection test failed: {e}")
+            return False
+    
+    def list_files(self, path: str, pattern: str = "*.pdf") -> List[Dict[str, Any]]:
+        """List files in a directory with retry logic."""
+        
+        def _list_operation(conn, path):
+            files = []
+            items = conn.listPath(self.config.share_name, path)
+            
+            for item in items:
+                if item.isDirectory:
+                    continue
+                    
+                # Check pattern match
+                if pattern == "*" or item.filename.lower().endswith(pattern.replace("*", "")):
+                    files.append({
+                        'filename': item.filename,
+                        'path': f"{path}/{item.filename}".replace('//', '/'),
+                        'size': item.file_size,
+                        'modified': datetime.fromtimestamp(item.last_write_time),
+                        'created': datetime.fromtimestamp(item.create_time),
+                    })
+            
+            return files
+        
+        return self.pool.execute_with_retry(_list_operation, path)
+    
+    def download_file(self, remote_path: str, local_path: str) -> bool:
+        """Download a file from NAS."""
+        
+        def _download_operation(conn, remote_path, local_path):
+            with open(local_path, 'wb') as f:
+                conn.retrieveFile(self.config.share_name, remote_path, f)
+            return True
+        
+        return self.pool.execute_with_retry(_download_operation, remote_path, local_path)
+    
+    def upload_file(self, local_path: str, remote_path: str) -> bool:
+        """Upload a file to NAS."""
+        
+        def _upload_operation(conn, local_path, remote_path):
+            with open(local_path, 'rb') as f:
+                conn.storeFile(self.config.share_name, remote_path, f)
+            return True
+        
+        return self.pool.execute_with_retry(_upload_operation, local_path, remote_path)
+    
+    def delete_file(self, remote_path: str) -> bool:
+        """Delete a file from NAS."""
+        
+        def _delete_operation(conn, remote_path):
+            conn.deleteFiles(self.config.share_name, remote_path)
+            return True
+        
+        return self.pool.execute_with_retry(_delete_operation, remote_path)
+    
+    def file_exists(self, remote_path: str) -> bool:
+        """Check if a file exists on NAS."""
+        
+        try:
+            def _exists_operation(conn, remote_path):
+                # Try to get file attributes
+                conn.getAttributes(self.config.share_name, remote_path)
+                return True
+            
+            return self.pool.execute_with_retry(_exists_operation, remote_path)
+        except:
+            return False
+    
+    def get_health_stats(self) -> Dict[str, Any]:
+        """Get connection health statistics."""
+        return self.pool.get_health_stats()
+    
+    def close(self):
+        """Close all connections."""
+        self.pool.close_all()
