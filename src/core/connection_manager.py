@@ -427,15 +427,17 @@ class ConnectionManager:
         return self.pool.execute_with_retry(_delete_operation, remote_path)
     
     def modify_file_date(self, remote_path: str, new_date: datetime, update_metadata: bool = True) -> bool:
-        """Download file, optionally update PDF metadata, modify its date locally, delete remote, and re-upload.
+        """Download file, optionally update PDF metadata, modify its date locally, then copy to NAS.
         
-        This is an atomic operation that ensures the file date is properly set on the NAS.
+        Uses system copy commands to preserve timestamps, replicating manual copy/paste behavior.
         """
         
         import tempfile
         import os
         import subprocess
+        import platform
         from pathlib import Path
+        import shutil
         
         def _modify_operation(conn, remote_path, new_date):
             # Create temp file
@@ -490,33 +492,141 @@ class ConnectionManager:
                 if abs((actual_mtime - expected_mtime).total_seconds()) > 60:
                     self.logger.warning(f"Date might not be set correctly. Expected: {expected_mtime}, Got: {actual_mtime}")
                 else:
-                    self.logger.debug(f"Successfully set file date to: {actual_mtime}")
+                    self.logger.debug(f"Successfully set file date locally to: {actual_mtime}")
                 
-                # Also try SetFile on macOS
-                import platform
+                # Also try SetFile on macOS for creation date
                 if platform.system() == 'Darwin':
                     try:
                         setfile_time = new_date.strftime("%m/%d/%Y %H:%M:%S")
                         setfile_cmd = ['SetFile', '-d', setfile_time, '-m', setfile_time, str(temp_path)]
                         subprocess.run(setfile_cmd, capture_output=True, text=True, timeout=5)
+                        self.logger.debug("Set creation date using SetFile")
                     except:
                         pass  # SetFile might not be available
                 
-                # Delete the remote file first
-                try:
-                    conn.deleteFiles(self.config.share_name, remote_path)
-                    self.logger.debug(f"Deleted remote file: {remote_path}")
-                except Exception as e:
-                    self.logger.debug(f"Could not delete remote file (might not exist): {e}")
+                # Now we need to copy the file to NAS preserving timestamps
+                # Look for existing mount points
+                nas_mount_path = None
                 
-                # Upload the modified file - this should preserve the local file's modification time
-                # but many NAS systems will override it to current time
-                with open(temp_path, 'rb') as f:
-                    conn.storeFile(self.config.share_name, remote_path, f)
+                # Check common mount locations
+                possible_mounts = [
+                    f"/Volumes/{self.config.share_name}",
+                    f"/Volumes/{self.config.nas_ip}/{self.config.share_name}",
+                    f"/Volumes/{self.config.nas_ip}-{self.config.share_name}",
+                    f"/Volumes/{self.config.share_name}-1",  # macOS sometimes adds -1
+                ]
                 
-                self.logger.info(f"Successfully modified date for {remote_path} to {new_date}")
+                # Also check for any mounted volume containing the share name
+                if os.path.exists("/Volumes"):
+                    for volume in os.listdir("/Volumes"):
+                        volume_path = f"/Volumes/{volume}"
+                        # Check if this might be our NAS share
+                        if (self.config.share_name.lower() in volume.lower() or 
+                            self.config.nas_ip in volume):
+                            possible_mounts.append(volume_path)
+                
+                # Find the first existing mount
+                for mount in possible_mounts:
+                    if os.path.exists(mount) and os.path.isdir(mount):
+                        nas_mount_path = mount
+                        self.logger.info(f"Found existing mount at: {nas_mount_path}")
+                        break
+                
+                if not nas_mount_path:
+                    # No existing mount found, try to mount it
+                    nas_mount_path = f"/Volumes/{self.config.share_name}"
+                    self.logger.info(f"No existing mount found, attempting to mount SMB share at {nas_mount_path}")
+                    
+                    # Create mount point if needed
+                    try:
+                        os.makedirs(nas_mount_path, exist_ok=True)
+                    except:
+                        pass
+                    
+                    mount_cmd = [
+                        'mount', '-t', 'smbfs',
+                        f'//{self.config.username}:{self.config.password}@{self.config.nas_ip}/{self.config.share_name}',
+                        nas_mount_path
+                    ]
+                    
+                    result = subprocess.run(mount_cmd, capture_output=True, text=True)
+                    if result.returncode != 0:
+                        self.logger.warning(f"Could not mount share: {result.stderr}")
+                        # Fall back to SMB upload
+                        raise Exception("Mount failed, falling back to SMB")
+                
+                # Construct full destination path
+                dest_path = Path(nas_mount_path) / remote_path.lstrip('/')
+                
+                # Ensure destination directory exists
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Use cp with -p flag to preserve timestamps (like manual copy/paste)
+                if platform.system() == 'Darwin':  # macOS
+                    # On macOS, use cp -p to preserve timestamps
+                    cp_cmd = ['cp', '-p', str(temp_path), str(dest_path)]
+                    result = subprocess.run(cp_cmd, capture_output=True, text=True)
+                    
+                    if result.returncode != 0:
+                        self.logger.warning(f"cp -p failed: {result.stderr}")
+                        # Try alternative: use ditto which preserves metadata on macOS
+                        ditto_cmd = ['ditto', '--preserveHFSCompression', str(temp_path), str(dest_path)]
+                        result = subprocess.run(ditto_cmd, capture_output=True, text=True)
+                        
+                        if result.returncode == 0:
+                            self.logger.info(f"Successfully copied file using ditto to {dest_path}")
+                        else:
+                            raise Exception(f"Failed to copy file: {result.stderr}")
+                    else:
+                        self.logger.info(f"Successfully copied file using cp -p to {dest_path}")
+                else:
+                    # On Linux, use cp --preserve=timestamps
+                    cp_cmd = ['cp', '--preserve=timestamps', str(temp_path), str(dest_path)]
+                    result = subprocess.run(cp_cmd, capture_output=True, text=True)
+                    
+                    if result.returncode != 0:
+                        # Fallback to shutil which might preserve some attributes
+                        shutil.copy2(str(temp_path), str(dest_path))
+                        self.logger.info(f"Copied file using shutil.copy2 to {dest_path}")
+                    else:
+                        self.logger.info(f"Successfully copied file using cp to {dest_path}")
+                
+                # Verify the file exists and has correct timestamp
+                if dest_path.exists():
+                    dest_stat = os.stat(dest_path)
+                    dest_mtime = datetime.fromtimestamp(dest_stat.st_mtime)
+                    self.logger.info(f"File on NAS has modification time: {dest_mtime}")
+                    
+                    if abs((dest_mtime - expected_mtime).total_seconds()) > 60:
+                        self.logger.warning(f"NAS file date might not match. Expected: {expected_mtime}, Got: {dest_mtime}")
+                
                 return True
                 
+            except Exception as e:
+                self.logger.error(f"Error in modify_file_date: {e}")
+                
+                # Fallback to SMB upload if mount/copy approach fails
+                self.logger.info("Falling back to SMB upload method")
+                
+                try:
+                    # Delete the remote file first
+                    try:
+                        conn.deleteFiles(self.config.share_name, remote_path)
+                        self.logger.debug(f"Deleted remote file: {remote_path}")
+                    except:
+                        pass
+                    
+                    # Upload via SMB (won't preserve timestamp but at least completes the operation)
+                    with open(temp_path, 'rb') as f:
+                        conn.storeFile(self.config.share_name, remote_path, f)
+                    
+                    self.logger.warning(f"File uploaded via SMB (timestamp may not be preserved)")
+                    return True
+                    
+                except Exception as fallback_error:
+                    self.logger.error(f"Fallback SMB upload also failed: {fallback_error}")
+                    raise
+                    
             finally:
                 # Clean up temp file
                 try:
