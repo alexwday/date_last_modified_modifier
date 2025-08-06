@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QMessageBox, QScrollArea, QGridLayout, QComboBox,
     QDateTimeEdit, QSlider, QSizePolicy, QListWidgetItem, QFrame,
     QProgressBar, QToolButton, QButtonGroup, QRadioButton, QSpacerItem,
-    QAbstractItemView, QStyle, QStyleOptionSlider, QToolBar
+    QAbstractItemView, QStyle, QStyleOptionSlider, QToolBar, QFormLayout
 )
 from PyQt6.QtCore import (
     Qt, QThread, pyqtSignal, QDateTime, QDate, QTime, QTimer, 
@@ -40,52 +40,6 @@ DEFAULT_SETTINGS = {
     'share_name': '',  # e.g., 'documents'
     'base_path': '',  # e.g., '/Archive/Scanned'
 }
-
-# UI Color Scheme
-COLORS = {
-    'primary': '#2C3E50',
-    'secondary': '#34495E',
-    'accent': '#3498DB',
-    'success': '#27AE60',
-    'warning': '#F39C12',
-    'danger': '#E74C3C',
-    'light': '#ECF0F1',
-    'dark': '#1A252F',
-    'pdf_bg': '#525659',
-    'hover': '#3A4F66'
-}
-
-
-class StyledButton(QPushButton):
-    """Custom styled button with hover effects."""
-    def __init__(self, text, color='primary', icon=None):
-        super().__init__(text)
-        self.color = COLORS.get(color, COLORS['primary'])
-        self.setIcon(icon if icon else QIcon())
-        self.update_style()
-        
-    def update_style(self):
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.color};
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: 500;
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS['hover']};
-            }}
-            QPushButton:pressed {{
-                background-color: {COLORS['dark']};
-            }}
-            QPushButton:disabled {{
-                background-color: #95A5A6;
-                color: #BDC3C7;
-            }}
-        """)
 
 
 class FileListItem(QListWidgetItem):
@@ -317,124 +271,6 @@ class PDFViewerApp(QMainWindow):
         self.init_ui()
         self.setup_shortcuts()
         self.load_defaults()
-        self.apply_theme()
-    
-    def apply_theme(self):
-        """Apply the professional dark theme."""
-        self.setStyleSheet(f"""
-            QMainWindow {{
-                background-color: {COLORS['light']};
-            }}
-            QGroupBox {{
-                font-weight: bold;
-                border: 2px solid {COLORS['secondary']};
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                background-color: white;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-                color: {COLORS['primary']};
-            }}
-            QListWidget {{
-                border: 1px solid {COLORS['secondary']};
-                border-radius: 4px;
-                background-color: white;
-                alternate-background-color: {COLORS['light']};
-                outline: none;
-                font-size: 12px;
-            }}
-            QListWidget::item {{
-                padding: 8px;
-                border-bottom: 1px solid {COLORS['light']};
-            }}
-            QListWidget::item:selected {{
-                background-color: {COLORS['accent']};
-                color: white;
-            }}
-            QListWidget::item:hover {{
-                background-color: {COLORS['hover']};
-                color: white;
-            }}
-            QLineEdit {{
-                min-height: 32px;
-                padding: 6px 10px;
-                border: 1px solid {COLORS['secondary']};
-                border-radius: 4px;
-                background-color: white;
-                font-size: 13px;
-            }}
-            QLineEdit:focus {{
-                border: 2px solid {COLORS['accent']};
-                outline: none;
-            }}
-            QDateTimeEdit {{
-                min-height: 36px;
-                padding: 6px 10px;
-                border: 1px solid {COLORS['secondary']};
-                border-radius: 4px;
-                background-color: white;
-                font-size: 14px;
-            }}
-            QDateTimeEdit:focus {{
-                border: 2px solid {COLORS['accent']};
-            }}
-            QDateTimeEdit::drop-down {{
-                subcontrol-origin: padding;
-                subcontrol-position: center right;
-                width: 24px;
-                border-left: 1px solid {COLORS['secondary']};
-                background-color: #F8F9FA;
-            }}
-            QDateTimeEdit::down-arrow {{
-                width: 12px;
-                height: 12px;
-            }}
-            QSlider::groove:horizontal {{
-                height: 6px;
-                background: {COLORS['secondary']};
-                border-radius: 3px;
-            }}
-            QSlider::handle:horizontal {{
-                background: {COLORS['accent']};
-                border: 1px solid {COLORS['primary']};
-                width: 16px;
-                height: 16px;
-                margin: -5px 0;
-                border-radius: 8px;
-            }}
-            QSlider::handle:horizontal:hover {{
-                background: {COLORS['primary']};
-            }}
-            QProgressBar {{
-                border: 1px solid {COLORS['secondary']};
-                border-radius: 4px;
-                text-align: center;
-                background-color: white;
-            }}
-            QProgressBar::chunk {{
-                background-color: {COLORS['accent']};
-                border-radius: 3px;
-            }}
-            QStatusBar {{
-                background-color: {COLORS['primary']};
-                color: white;
-                font-size: 12px;
-            }}
-            QScrollArea {{
-                border: 1px solid {COLORS['secondary']};
-                border-radius: 4px;
-            }}
-            QLabel {{
-                color: {COLORS['dark']};
-            }}
-            QMessageBox {{
-                background-color: white;
-            }}
-        """)
     
     def load_defaults(self):
         """Load default settings into the UI."""
@@ -471,606 +307,241 @@ class PDFViewerApp(QMainWindow):
                 shortcut=QKeySequence("Ctrl+K")).setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
     
     def init_ui(self):
-        self.setWindowTitle("PDF Date Modifier Pro")
-        self.setGeometry(100, 100, 1500, 950)
+        self.setWindowTitle("PDF Date Modifier")
+        self.setGeometry(100, 100, 1400, 900)
         
-        # Set application icon if available
-        self.setWindowIcon(QIcon())
-        
-        # Central widget
+        # Central widget with main layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 5)
         
-        # Top Section: Connection Panel
-        self.create_connection_panel(main_layout)
+        # Connection panel
+        connection_group = QGroupBox("Network Connection")
+        connection_layout = QFormLayout()
+        connection_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        connection_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         
-        # Middle Section: Main Content Area
-        self.create_main_content(main_layout)
-        
-        # Bottom Section: Action Panel
-        self.create_action_panel(main_layout)
-        
-        # Status bar with progress indicator
-        self.create_status_bar()
-    
-    def create_connection_panel(self, parent_layout):
-        """Create the connection panel with improved layout."""
-        connection_frame = QFrame()
-        connection_frame.setMaximumHeight(160)
-        connection_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: white;
-                border-radius: 8px;
-                padding: 15px;
-            }}
-        """)
-        
-        connection_layout = QVBoxLayout(connection_frame)
-        connection_layout.setSpacing(12)
-        
-        # Title and status indicator
-        header_layout = QHBoxLayout()
-        
-        title_label = QLabel("🔌 Network Connection")
-        title_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {COLORS['primary']};")
-        header_layout.addWidget(title_label)
-        
-        self.connection_indicator = QLabel("⚫ Disconnected")
-        self.connection_indicator.setStyleSheet("font-size: 14px; color: #7F8C8D;")
-        header_layout.addWidget(self.connection_indicator)
-        
-        header_layout.addStretch()
-        connection_layout.addLayout(header_layout)
-        
-        # Connection fields in a grid
-        fields_layout = QGridLayout()
-        fields_layout.setSpacing(10)
-        fields_layout.setHorizontalSpacing(15)
-        
-        # Row 1: Core connection details
-        server_label = QLabel("Server:")
-        server_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        server_label.setMinimumWidth(80)
-        fields_layout.addWidget(server_label, 0, 0)
+        # First row - server details
+        server_row = QHBoxLayout()
         self.nas_ip_input = QLineEdit()
         self.nas_ip_input.setPlaceholderText("192.168.1.100")
-        self.nas_ip_input.setFixedHeight(35)
-        self.nas_ip_input.setMinimumWidth(150)
-        fields_layout.addWidget(self.nas_ip_input, 0, 1)
+        server_row.addWidget(self.nas_ip_input)
         
-        username_label = QLabel("Username:")
-        username_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        username_label.setMinimumWidth(80)
-        fields_layout.addWidget(username_label, 0, 2)
         self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("admin")
-        self.username_input.setFixedHeight(35)
-        self.username_input.setMinimumWidth(150)
-        fields_layout.addWidget(self.username_input, 0, 3)
+        self.username_input.setPlaceholderText("Username")
+        server_row.addWidget(self.username_input)
         
-        password_label = QLabel("Password:")
-        password_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        password_label.setMinimumWidth(80)
-        fields_layout.addWidget(password_label, 0, 4)
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("••••••••")
-        self.password_input.setFixedHeight(35)
-        self.password_input.setMinimumWidth(150)
-        fields_layout.addWidget(self.password_input, 0, 5)
+        self.password_input.setPlaceholderText("Password")
+        server_row.addWidget(self.password_input)
         
-        # Row 2: Path details
-        share_label = QLabel("Share:")
-        share_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        share_label.setMinimumWidth(80)
-        fields_layout.addWidget(share_label, 1, 0)
+        connection_layout.addRow("Server Details:", server_row)
+        
+        # Second row - share and path
+        path_row = QHBoxLayout()
         self.share_input = QLineEdit()
-        self.share_input.setPlaceholderText("documents")
-        self.share_input.setFixedHeight(35)
-        self.share_input.setMinimumWidth(150)
-        fields_layout.addWidget(self.share_input, 1, 1)
+        self.share_input.setPlaceholderText("Share name")
+        path_row.addWidget(self.share_input)
         
-        path_label = QLabel("Base Path:")
-        path_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        path_label.setMinimumWidth(80)
-        fields_layout.addWidget(path_label, 1, 2)
         self.base_path_input = QLineEdit()
-        self.base_path_input.setPlaceholderText("/Archive/Scanned")
-        self.base_path_input.setFixedHeight(35)
-        self.base_path_input.setMinimumWidth(200)
-        fields_layout.addWidget(self.base_path_input, 1, 3, 1, 2)
+        self.base_path_input.setPlaceholderText("/path/to/pdfs")
+        path_row.addWidget(self.base_path_input)
         
-        folder_label = QLabel("Folder:")
-        folder_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        folder_label.setMinimumWidth(60)
-        fields_layout.addWidget(folder_label, 1, 5)
         self.folder_input = QLineEdit()
-        self.folder_input.setPlaceholderText("2024")
-        self.folder_input.setFixedHeight(35)
-        self.folder_input.setMinimumWidth(100)
-        fields_layout.addWidget(self.folder_input, 1, 6)
+        self.folder_input.setPlaceholderText("Subfolder (optional)")
+        path_row.addWidget(self.folder_input)
         
-        # Add spacer before button
-        fields_layout.addItem(QSpacerItem(20, 0, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum), 1, 7)
+        connection_layout.addRow("Path:", path_row)
         
-        # Connect button
-        self.connect_button = StyledButton("Connect", 'accent')
+        # Connection button and status
+        button_row = QHBoxLayout()
+        self.connect_button = QPushButton("Connect")
         self.connect_button.clicked.connect(self.connect_to_nas)
-        self.connect_button.setMinimumWidth(120)
-        self.connect_button.setFixedHeight(35)
-        fields_layout.addWidget(self.connect_button, 1, 8)
+        button_row.addWidget(self.connect_button)
         
-        fields_layout.setColumnStretch(9, 1)
-        connection_layout.addLayout(fields_layout)
+        self.connection_status_label = QLabel("Disconnected")
+        button_row.addWidget(self.connection_status_label)
+        button_row.addStretch()
         
-        parent_layout.addWidget(connection_frame)
-    
-    def create_main_content(self, parent_layout):
-        """Create the main content area with file list and PDF viewer."""
+        connection_layout.addRow("", button_row)
+        
+        connection_group.setLayout(connection_layout)
+        connection_group.setMaximumHeight(150)
+        main_layout.addWidget(connection_group)
+        
+        # Main content area with splitter
         splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        # Left Panel: File Browser
-        file_frame = QFrame()
-        file_frame.setStyleSheet("""
-            QFrame {
-                background-color: white;
-                border-radius: 8px;
-                padding: 10px;
-            }
-        """)
-        file_layout = QVBoxLayout(file_frame)
+        # Left panel - File list
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
         
-        # File browser header
-        browser_header = QHBoxLayout()
-        browser_label = QLabel("📁 PDF Files")
-        browser_label.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {COLORS['primary']};")
-        browser_header.addWidget(browser_label)
+        file_list_label = QLabel("PDF Files")
+        file_list_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        left_layout.addWidget(file_list_label)
         
-        self.file_count_label = QLabel("0 files")
-        self.file_count_label.setStyleSheet("font-size: 12px; color: #7F8C8D;")
-        browser_header.addWidget(self.file_count_label)
-        browser_header.addStretch()
-        
-        file_layout.addLayout(browser_header)
-        
-        # Search/filter bar
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("🔍 Search files...")
-        self.search_input.setFixedHeight(35)
+        self.search_input.setPlaceholderText("Search files...")
         self.search_input.textChanged.connect(self.filter_files)
-        file_layout.addWidget(self.search_input)
+        left_layout.addWidget(self.search_input)
         
-        # File list
         self.file_list = QListWidget()
         self.file_list.setAlternatingRowColors(True)
-        self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.file_list.itemSelectionChanged.connect(self.on_file_select)
-        file_layout.addWidget(self.file_list)
+        left_layout.addWidget(self.file_list)
         
-        # Quick stats
-        self.stats_label = QLabel("Select a file to view details")
-        self.stats_label.setStyleSheet("font-size: 11px; color: #7F8C8D; padding: 5px;")
-        file_layout.addWidget(self.stats_label)
+        self.file_count_label = QLabel("0 files")
+        left_layout.addWidget(self.file_count_label)
         
-        file_frame.setMaximumWidth(400)
-        splitter.addWidget(file_frame)
+        left_panel.setMaximumWidth(400)
+        splitter.addWidget(left_panel)
         
-        # Right Panel: PDF Viewer
-        viewer_frame = QFrame()
-        viewer_frame.setStyleSheet("""
-            QFrame {
-                background-color: white;
-                border-radius: 8px;
-                padding: 10px;
-            }
-        """)
-        viewer_layout = QVBoxLayout(viewer_frame)
+        # Right panel - PDF viewer and controls
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
         
-        # Viewer header with controls
-        self.create_viewer_controls(viewer_layout)
-        
-        # PDF display area
-        self.pdf_scroll = QScrollArea()
-        self.pdf_scroll.setWidgetResizable(False)
-        self.pdf_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pdf_scroll.setStyleSheet(f"""
-            QScrollArea {{
-                background-color: {COLORS['pdf_bg']};
-                border: none;
-                border-radius: 4px;
-            }}
-        """)
-        
-        self.pdf_label = QLabel()
-        self.pdf_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pdf_label.setText("📄 No PDF loaded\n\nSelect a file from the list to preview")
-        self.pdf_label.setStyleSheet("""
-            QLabel {
-                background-color: white;
-                padding: 20px;
-                color: #7F8C8D;
-                font-size: 14px;
-            }
-        """)
-        self.pdf_scroll.setWidget(self.pdf_label)
-        
-        viewer_layout.addWidget(self.pdf_scroll)
-        
-        # Loading progress bar
-        self.load_progress = QProgressBar()
-        self.load_progress.setMaximumHeight(3)
-        self.load_progress.setTextVisible(False)
-        self.load_progress.hide()
-        viewer_layout.addWidget(self.load_progress)
-        
-        splitter.addWidget(viewer_frame)
-        
-        # Set splitter sizes
-        splitter.setSizes([400, 1100])
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        
-        parent_layout.addWidget(splitter)
-    
-    def create_viewer_controls(self, parent_layout):
-        """Create the PDF viewer control panel."""
-        controls_layout = QHBoxLayout()
-        controls_layout.setSpacing(15)
+        # PDF viewer controls
+        viewer_controls = QHBoxLayout()
         
         # Page navigation
-        nav_frame = QFrame()
-        nav_frame.setStyleSheet("""
-            QFrame {
-                background-color: #F8F9FA;
-                border-radius: 4px;
-                padding: 5px;
-            }
-        """)
-        nav_layout = QHBoxLayout(nav_frame)
-        nav_layout.setSpacing(5)
-        
         self.prev_page_btn = QPushButton("◀")
         self.prev_page_btn.clicked.connect(self.prev_page)
         self.prev_page_btn.setEnabled(False)
-        self.prev_page_btn.setFixedSize(32, 32)
-        self.prev_page_btn.setStyleSheet("""
-            QPushButton {
-                background-color: white;
-                border: 1px solid #DEE2E6;
-                border-radius: 4px;
-                font-size: 14px;
-            }
-            QPushButton:hover:enabled {
-                background-color: #E9ECEF;
-            }
-            QPushButton:disabled {
-                color: #ADB5BD;
-            }
-        """)
-        nav_layout.addWidget(self.prev_page_btn)
+        self.prev_page_btn.setMaximumWidth(40)
+        viewer_controls.addWidget(self.prev_page_btn)
         
         self.page_label = QLabel("Page: 0/0")
-        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.page_label.setMinimumWidth(100)
-        self.page_label.setStyleSheet("font-weight: bold;")
-        nav_layout.addWidget(self.page_label)
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        viewer_controls.addWidget(self.page_label)
         
         self.next_page_btn = QPushButton("▶")
         self.next_page_btn.clicked.connect(self.next_page)
         self.next_page_btn.setEnabled(False)
-        self.next_page_btn.setFixedSize(32, 32)
-        self.next_page_btn.setStyleSheet("""
-            QPushButton {
-                background-color: white;
-                border: 1px solid #DEE2E6;
-                border-radius: 4px;
-                font-size: 14px;
-            }
-            QPushButton:hover:enabled {
-                background-color: #E9ECEF;
-            }
-            QPushButton:disabled {
-                color: #ADB5BD;
-            }
-        """)
-        nav_layout.addWidget(self.next_page_btn)
+        self.next_page_btn.setMaximumWidth(40)
+        viewer_controls.addWidget(self.next_page_btn)
         
-        controls_layout.addWidget(nav_frame)
-        
-        controls_layout.addStretch()
+        viewer_controls.addStretch()
         
         # Zoom controls
-        zoom_frame = QFrame()
-        zoom_frame.setStyleSheet("""
-            QFrame {
-                background-color: #F8F9FA;
-                border-radius: 4px;
-                padding: 5px;
-            }
-        """)
-        zoom_layout = QHBoxLayout(zoom_frame)
-        zoom_layout.setSpacing(10)
-        
-        zoom_layout.addWidget(QLabel("🔍"))
+        viewer_controls.addWidget(QLabel("Zoom:"))
         
         self.zoom_out_btn = QPushButton("-")
         self.zoom_out_btn.clicked.connect(self.zoom_out)
-        self.zoom_out_btn.setFixedSize(28, 28)
-        self.zoom_out_btn.setStyleSheet("""
-            QPushButton {
-                background-color: white;
-                border: 1px solid #DEE2E6;
-                border-radius: 4px;
-                font-size: 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #E9ECEF;
-            }
-        """)
-        zoom_layout.addWidget(self.zoom_out_btn)
+        self.zoom_out_btn.setMaximumWidth(30)
+        viewer_controls.addWidget(self.zoom_out_btn)
         
         self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
         self.zoom_slider.setMinimum(25)
         self.zoom_slider.setMaximum(400)
         self.zoom_slider.setValue(100)
-        self.zoom_slider.setTickPosition(QSlider.TickPosition.NoTicks)
-        self.zoom_slider.setMinimumWidth(120)
+        self.zoom_slider.setMaximumWidth(150)
         self.zoom_slider.valueChanged.connect(self.on_zoom_changed)
-        zoom_layout.addWidget(self.zoom_slider)
+        viewer_controls.addWidget(self.zoom_slider)
         
         self.zoom_in_btn = QPushButton("+")
         self.zoom_in_btn.clicked.connect(self.zoom_in)
-        self.zoom_in_btn.setFixedSize(28, 28)
-        self.zoom_in_btn.setStyleSheet("""
-            QPushButton {
-                background-color: white;
-                border: 1px solid #DEE2E6;
-                border-radius: 4px;
-                font-size: 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #E9ECEF;
-            }
-        """)
-        zoom_layout.addWidget(self.zoom_in_btn)
+        self.zoom_in_btn.setMaximumWidth(30)
+        viewer_controls.addWidget(self.zoom_in_btn)
         
         self.zoom_label = QLabel("100%")
-        self.zoom_label.setMinimumWidth(45)
-        self.zoom_label.setStyleSheet("font-weight: bold;")
-        zoom_layout.addWidget(self.zoom_label)
+        self.zoom_label.setMinimumWidth(50)
+        viewer_controls.addWidget(self.zoom_label)
         
-        self.fit_button = QPushButton("⊡ Fit")
+        self.fit_button = QPushButton("Fit to Page")
         self.fit_button.clicked.connect(self.fit_to_page_clicked)
         self.fit_button.setCheckable(True)
         self.fit_button.setChecked(True)
-        self.fit_button.setFixedHeight(28)
-        self.fit_button.setMinimumWidth(60)
-        self.fit_button.setStyleSheet("""
-            QPushButton {
-                background-color: white;
-                border: 1px solid #DEE2E6;
-                border-radius: 4px;
-                padding: 4px 10px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #E9ECEF;
-            }
-            QPushButton:checked {
-                background-color: #3498DB;
-                color: white;
-                border-color: #3498DB;
-            }
-        """)
-        zoom_layout.addWidget(self.fit_button)
+        viewer_controls.addWidget(self.fit_button)
         
-        controls_layout.addWidget(zoom_frame)
+        right_layout.addLayout(viewer_controls)
         
-        parent_layout.addLayout(controls_layout)
-    
-    def create_action_panel(self, parent_layout):
-        """Create the bottom action panel for date modification."""
-        action_frame = QFrame()
-        action_frame.setMaximumHeight(120)
-        action_frame.setStyleSheet("""
-            QFrame {
-                background-color: white;
-                border-radius: 8px;
-                padding: 15px;
-            }
-        """)
+        # PDF display area
+        self.pdf_scroll = QScrollArea()
+        self.pdf_scroll.setWidgetResizable(False)
+        self.pdf_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pdf_scroll.setStyleSheet("QScrollArea { background-color: #525659; }")
         
-        action_layout = QHBoxLayout(action_frame)
-        action_layout.setSpacing(25)
+        self.pdf_label = QLabel()
+        self.pdf_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pdf_label.setText("No PDF loaded")
+        self.pdf_label.setStyleSheet("QLabel { background-color: white; padding: 20px; }")
+        self.pdf_scroll.setWidget(self.pdf_label)
+        
+        right_layout.addWidget(self.pdf_scroll)
+        
+        # Progress bar
+        self.load_progress = QProgressBar()
+        self.load_progress.setMaximumHeight(5)
+        self.load_progress.setTextVisible(False)
+        self.load_progress.hide()
+        right_layout.addWidget(self.load_progress)
+        
+        splitter.addWidget(right_panel)
+        splitter.setSizes([350, 1050])
+        
+        main_layout.addWidget(splitter)
+        
+        # Bottom panel - Date modification controls
+        date_group = QGroupBox("Date Modification")
+        date_layout = QHBoxLayout()
         
         # Current date display
-        date_info_layout = QVBoxLayout()
-        date_info_label = QLabel("Current File Date")
-        date_info_label.setStyleSheet("font-size: 12px; color: #7F8C8D; font-weight: 500;")
-        date_info_layout.addWidget(date_info_label)
-        
+        date_layout.addWidget(QLabel("Current Date:"))
         self.current_date_label = QLabel("No file selected")
-        self.current_date_label.setStyleSheet(f"""
-            font-size: 16px;
-            font-weight: bold;
-            color: {COLORS['primary']};
-            padding: 8px 15px;
-            background-color: #F8F9FA;
-            border-radius: 4px;
-            min-width: 200px;
-        """)
-        self.current_date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        date_info_layout.addWidget(self.current_date_label)
-        action_layout.addLayout(date_info_layout)
+        self.current_date_label.setStyleSheet("font-weight: bold; padding: 5px; background-color: #f0f0f0; border-radius: 3px;")
+        date_layout.addWidget(self.current_date_label)
         
-        # Separator
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.VLine)
-        separator.setStyleSheet("color: #E0E0E0;")
-        action_layout.addWidget(separator)
+        date_layout.addStretch()
         
         # New date selection
-        new_date_layout = QVBoxLayout()
-        new_date_label = QLabel("Set New Date")
-        new_date_label.setStyleSheet("font-size: 12px; color: #7F8C8D; font-weight: 500;")
-        new_date_layout.addWidget(new_date_label)
-        
-        date_input_layout = QHBoxLayout()
-        date_input_layout.setSpacing(10)
-        
+        date_layout.addWidget(QLabel("New Date:"))
         self.date_time_edit = QDateTimeEdit()
         self.date_time_edit.setCalendarPopup(True)
         self.date_time_edit.setDateTime(QDateTime.currentDateTime())
         self.date_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-        self.date_time_edit.setMinimumWidth(220)
-        self.date_time_edit.setFixedHeight(42)
-        self.date_time_edit.setStyleSheet("""
-            QDateTimeEdit {
-                font-size: 14px;
-                padding: 8px;
-            }
-        """)
-        date_input_layout.addWidget(self.date_time_edit)
+        self.date_time_edit.setMinimumWidth(200)
+        date_layout.addWidget(self.date_time_edit)
         
-        # Quick date buttons
-        self.today_btn = QPushButton("Today")
-        self.today_btn.setFixedHeight(42)
-        self.today_btn.setMinimumWidth(70)
-        self.today_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F8F9FA;
-                border: 1px solid #DEE2E6;
-                border-radius: 4px;
-                padding: 8px 15px;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #E9ECEF;
-            }
-        """)
+        self.today_btn = QPushButton("Set to Today")
         self.today_btn.clicked.connect(lambda: self.date_time_edit.setDateTime(QDateTime.currentDateTime()))
-        date_input_layout.addWidget(self.today_btn)
+        date_layout.addWidget(self.today_btn)
         
-        new_date_layout.addLayout(date_input_layout)
-        action_layout.addLayout(new_date_layout)
-        
-        action_layout.addStretch()
-        
-        # Action buttons
-        button_layout = QVBoxLayout()
-        button_layout.setSpacing(8)
-        
-        self.modify_button = StyledButton("✓ Apply Date", 'success')
+        # Modification button
+        self.modify_button = QPushButton("Apply Date Change")
         self.modify_button.clicked.connect(self.modify_file_date)
         self.modify_button.setEnabled(False)
-        self.modify_button.setMinimumWidth(170)
-        self.modify_button.setFixedHeight(42)
-        self.modify_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {COLORS['success']};
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 4px;
-                font-weight: 600;
-                font-size: 14px;
-            }}
-            QPushButton:hover {{
-                background-color: #229954;
-            }}
-            QPushButton:disabled {{
-                background-color: #95A5A6;
-                color: #BDC3C7;
-            }}
-        """)
-        button_layout.addWidget(self.modify_button)
+        self.modify_button.setStyleSheet("QPushButton { background-color: #28a745; color: white; font-weight: bold; padding: 5px 15px; } QPushButton:disabled { background-color: #cccccc; }")
+        date_layout.addWidget(self.modify_button)
         
-        nav_btn_layout = QHBoxLayout()
-        nav_btn_layout.setSpacing(8)
+        # File navigation
+        date_layout.addWidget(QLabel("  |  "))
         
-        self.prev_file_button = QPushButton("← Previous")
+        self.prev_file_button = QPushButton("← Previous File")
         self.prev_file_button.clicked.connect(self.prev_file)
         self.prev_file_button.setEnabled(False)
-        self.prev_file_button.setFixedHeight(35)
-        self.prev_file_button.setMinimumWidth(80)
-        self.prev_file_button.setStyleSheet("""
-            QPushButton {
-                background-color: #F8F9FA;
-                border: 1px solid #DEE2E6;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-size: 12px;
-            }
-            QPushButton:hover:enabled {
-                background-color: #E9ECEF;
-            }
-            QPushButton:disabled {
-                color: #ADB5BD;
-            }
-        """)
-        nav_btn_layout.addWidget(self.prev_file_button)
+        date_layout.addWidget(self.prev_file_button)
         
-        self.next_file_button = QPushButton("Next →")
+        self.next_file_button = QPushButton("Next File →")
         self.next_file_button.clicked.connect(self.next_file)
         self.next_file_button.setEnabled(False)
-        self.next_file_button.setFixedHeight(35)
-        self.next_file_button.setMinimumWidth(80)
-        self.next_file_button.setStyleSheet("""
-            QPushButton {
-                background-color: #F8F9FA;
-                border: 1px solid #DEE2E6;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-size: 12px;
-            }
-            QPushButton:hover:enabled {
-                background-color: #E9ECEF;
-            }
-            QPushButton:disabled {
-                color: #ADB5BD;
-            }
-        """)
-        nav_btn_layout.addWidget(self.next_file_button)
+        date_layout.addWidget(self.next_file_button)
         
-        button_layout.addLayout(nav_btn_layout)
-        action_layout.addLayout(button_layout)
+        date_group.setLayout(date_layout)
+        date_group.setMaximumHeight(100)
+        main_layout.addWidget(date_group)
         
-        parent_layout.addWidget(action_frame)
-    
-    def create_status_bar(self):
-        """Create an enhanced status bar."""
-        status = self.statusBar()
-        status.showMessage("⚡ Ready - Press Ctrl+K to connect")
-        
-        # Add permanent widgets to status bar
-        self.progress_label = QLabel("")
-        status.addPermanentWidget(self.progress_label)
+        # Status bar
+        self.statusBar().showMessage("Ready")
     
     def filter_files(self, text):
         """Filter the file list based on search input."""
         for i in range(self.file_list.count()):
             item = self.file_list.item(i)
             item.setHidden(text.lower() not in item.text().lower())
-    
-    def update_connection_status(self, connected):
-        """Update the connection status indicator."""
-        if connected:
-            self.connection_indicator.setText("🟢 Connected")
-            self.connection_indicator.setStyleSheet(f"font-size: 14px; color: {COLORS['success']};")
-            self.connect_button.setText("Disconnect")
-            self.connect_button.color = COLORS['danger']
-            self.connect_button.update_style()
-        else:
-            self.connection_indicator.setText("⚫ Disconnected")
-            self.connection_indicator.setStyleSheet("font-size: 14px; color: #7F8C8D;")
-            self.connect_button.setText("Connect")
-            self.connect_button.color = COLORS['accent']
-            self.connect_button.update_style()
     
     def connect_to_nas(self):
         if self.connection_status:
@@ -1099,16 +570,16 @@ class PDFViewerApp(QMainWindow):
         
         if not all([nas_ip, username, password, share]):
             QMessageBox.warning(self, "Missing Information", 
-                               "Please fill in Server, Username, Password, and Share fields.")
+                               "Please fill in Server IP, Username, Password, and Share fields.")
             return
         
-        self.statusBar().showMessage(f"🔄 Connecting to {nas_ip}...")
+        self.statusBar().showMessage(f"Connecting to {nas_ip}...")
         self.connect_button.setEnabled(False)
         
         self.connection_thread = ConnectionThread(nas_ip, username, password, share, full_path)
         self.connection_thread.success.connect(self.on_connection_success)
         self.connection_thread.error.connect(self.on_connection_error)
-        self.connection_thread.progress.connect(lambda msg: self.statusBar().showMessage(f"🔄 {msg}"))
+        self.connection_thread.progress.connect(lambda msg: self.statusBar().showMessage(msg))
         self.connection_thread.start()
     
     def on_connection_success(self, files):
@@ -1116,8 +587,10 @@ class PDFViewerApp(QMainWindow):
         self.pdf_files = files
         self.connection_status = True
         
-        self.update_connection_status(True)
+        self.connect_button.setText("Disconnect")
         self.connect_button.setEnabled(True)
+        self.connection_status_label.setText("Connected")
+        self.connection_status_label.setStyleSheet("color: green; font-weight: bold;")
         
         # Update file list
         self.file_list.clear()
@@ -1126,13 +599,13 @@ class PDFViewerApp(QMainWindow):
             self.file_list.addItem(item)
         
         self.file_count_label.setText(f"{len(files)} files")
-        self.statusBar().showMessage(f"✅ Connected - Found {len(files)} PDF files")
+        self.statusBar().showMessage(f"Connected - Found {len(files)} PDF files")
         
         if files:
             self.file_list.setCurrentRow(0)
     
     def on_connection_error(self, error_msg):
-        self.statusBar().showMessage(f"❌ Connection failed: {error_msg}")
+        self.statusBar().showMessage(f"Connection failed: {error_msg}")
         self.connect_button.setEnabled(True)
         QMessageBox.critical(self, "Connection Error", error_msg)
     
@@ -1142,14 +615,16 @@ class PDFViewerApp(QMainWindow):
             self.nas_connection = None
         
         self.connection_status = False
-        self.update_connection_status(False)
+        self.connect_button.setText("Connect")
+        self.connection_status_label.setText("Disconnected")
+        self.connection_status_label.setStyleSheet("color: red;")
         
         self.file_list.clear()
         self.pdf_files = []
         self.file_count_label.setText("0 files")
         self.clear_pdf_viewer()
         
-        self.statusBar().showMessage("⚡ Disconnected from NAS")
+        self.statusBar().showMessage("Disconnected from NAS")
     
     def on_file_select(self):
         current_item = self.file_list.currentItem()
@@ -1158,10 +633,6 @@ class PDFViewerApp(QMainWindow):
         
         self.current_file_index = self.file_list.currentRow()
         file_info = current_item.file_info
-        
-        # Update stats
-        size_mb = file_info['size'] / (1024 * 1024)
-        self.stats_label.setText(f"Size: {size_mb:.2f} MB | Modified: {file_info['modified'].strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Update dates
         modified_date = file_info['modified']
@@ -1173,7 +644,7 @@ class PDFViewerApp(QMainWindow):
         )
         self.date_time_edit.setDateTime(qt_datetime)
         
-        self.statusBar().showMessage(f"📄 Loading {file_info['filename']}...")
+        self.statusBar().showMessage(f"Loading {file_info['filename']}...")
         
         # Show progress bar
         self.load_progress.show()
@@ -1208,7 +679,7 @@ class PDFViewerApp(QMainWindow):
         # Hide progress bar
         self.load_progress.hide()
         
-        self.statusBar().showMessage(f"✅ Loaded {data['file_info']['filename']} ({self.total_pages} pages)")
+        self.statusBar().showMessage(f"Loaded {data['file_info']['filename']} ({self.total_pages} pages)")
         self.modify_button.setEnabled(True)
         self.next_file_button.setEnabled(self.current_file_index < len(self.pdf_files) - 1)
         self.prev_file_button.setEnabled(self.current_file_index > 0)
@@ -1216,7 +687,7 @@ class PDFViewerApp(QMainWindow):
     def on_pdf_error(self, error_msg):
         self.load_progress.hide()
         QMessageBox.critical(self, "Error", f"Failed to load PDF: {error_msg}")
-        self.statusBar().showMessage("❌ Error loading PDF")
+        self.statusBar().showMessage("Error loading PDF")
     
     def calculate_fit_zoom(self, page):
         """Calculate zoom to fit page in viewport."""
@@ -1311,14 +782,13 @@ class PDFViewerApp(QMainWindow):
     
     def clear_pdf_viewer(self):
         self.pdf_label.clear()
-        self.pdf_label.setText("📄 No PDF loaded\n\nSelect a file from the list to preview")
+        self.pdf_label.setText("No PDF loaded")
         self.page_label.setText("Page: 0/0")
         self.prev_page_btn.setEnabled(False)
         self.next_page_btn.setEnabled(False)
         self.modify_button.setEnabled(False)
         self.next_file_button.setEnabled(False)
         self.prev_file_button.setEnabled(False)
-        self.stats_label.setText("Select a file to view details")
         self.current_date_label.setText("No file selected")
         
         if self.current_pdf_doc:
@@ -1330,6 +800,9 @@ class PDFViewerApp(QMainWindow):
             self.temp_pdf_path = None
     
     def modify_file_date(self):
+        if not self.current_pdf_path:
+            return
+            
         qt_datetime = self.date_time_edit.dateTime()
         new_date = datetime(
             qt_datetime.date().year(),
@@ -1340,7 +813,7 @@ class PDFViewerApp(QMainWindow):
             qt_datetime.time().second()
         )
         
-        self.statusBar().showMessage("🔄 Modifying file date...")
+        self.statusBar().showMessage("Modifying file date...")
         
         self.modify_thread = DateModifyThread(
             self.nas_connection, 
@@ -1359,14 +832,14 @@ class PDFViewerApp(QMainWindow):
             current_item.update_display()
         
         self.current_date_label.setText(new_date.strftime('%Y-%m-%d %H:%M:%S'))
-        self.statusBar().showMessage(f"✅ Date modified successfully to {new_date.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.statusBar().showMessage(f"Date modified successfully to {new_date.strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Auto-advance to next file after a short delay
         QTimer.singleShot(1000, self.next_file)
     
     def on_modify_error(self, error_msg):
         QMessageBox.critical(self, "Modification Error", f"Failed to modify date: {error_msg}")
-        self.statusBar().showMessage("❌ Error modifying date")
+        self.statusBar().showMessage("Error modifying date")
 
 
 def main():
@@ -1374,7 +847,7 @@ def main():
     app.setStyle('Fusion')
     
     # Set application metadata
-    app.setApplicationName("PDF Date Modifier Pro")
+    app.setApplicationName("PDF Date Modifier")
     app.setOrganizationName("DateModifier")
     
     window = PDFViewerApp()
