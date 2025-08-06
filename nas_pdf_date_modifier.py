@@ -310,6 +310,11 @@ class PDFViewerApp(QMainWindow):
         self.fit_to_page = True
         self.connection_status = False
         
+        # Keep thread references to prevent early destruction
+        self.connection_thread = None
+        self.pdf_thread = None
+        self.modify_thread = None
+        
         self.init_ui()
         self.setup_shortcuts()
         self.load_defaults()
@@ -623,10 +628,15 @@ class PDFViewerApp(QMainWindow):
         self.statusBar().showMessage(f"Connecting to {nas_ip}...")
         self.connect_button.setEnabled(False)
         
+        # Clean up any existing thread
+        if self.connection_thread and self.connection_thread.isRunning():
+            self.connection_thread.wait()
+        
         self.connection_thread = ConnectionThread(nas_ip, username, password, share, full_path)
         self.connection_thread.success.connect(self.on_connection_success)
         self.connection_thread.error.connect(self.on_connection_error)
         self.connection_thread.progress.connect(lambda msg: self.statusBar().showMessage(msg))
+        self.connection_thread.finished.connect(self.connection_thread.deleteLater)
         self.connection_thread.start()
     
     def on_connection_success(self, files):
@@ -700,10 +710,15 @@ class PDFViewerApp(QMainWindow):
         self.load_progress.setValue(0)
         
         # Load PDF
+        # Clean up any existing thread
+        if self.pdf_thread and self.pdf_thread.isRunning():
+            self.pdf_thread.wait()
+            
         self.pdf_thread = PDFLoadThread(self.nas_connection, file_info)
         self.pdf_thread.loaded.connect(self.on_pdf_loaded)
         self.pdf_thread.error.connect(self.on_pdf_error)
         self.pdf_thread.progress.connect(self.load_progress.setValue)
+        self.pdf_thread.finished.connect(self.pdf_thread.deleteLater)
         self.pdf_thread.start()
     
     def on_pdf_loaded(self, data):
@@ -851,6 +866,9 @@ class PDFViewerApp(QMainWindow):
     def modify_file_date(self):
         if not self.current_pdf_path:
             return
+        
+        # Disable the modify button to prevent multiple operations
+        self.modify_button.setEnabled(False)
             
         qt_datetime = self.date_time_edit.dateTime()
         new_date = datetime(
@@ -864,6 +882,10 @@ class PDFViewerApp(QMainWindow):
         
         self.statusBar().showMessage("Modifying file date...")
         
+        # Clean up any existing thread
+        if self.modify_thread and self.modify_thread.isRunning():
+            self.modify_thread.wait()
+        
         self.modify_thread = DateModifyThread(
             self.nas_connection, 
             self.current_pdf_path, 
@@ -871,6 +893,8 @@ class PDFViewerApp(QMainWindow):
         )
         self.modify_thread.success.connect(lambda: self.on_modify_success(new_date))
         self.modify_thread.error.connect(self.on_modify_error)
+        self.modify_thread.finished.connect(lambda: self.modify_button.setEnabled(True))
+        self.modify_thread.finished.connect(self.modify_thread.deleteLater)
         self.modify_thread.start()
     
     def on_modify_success(self, new_date):
@@ -931,8 +955,49 @@ class PDFViewerApp(QMainWindow):
             print(f"Error refreshing file list: {e}")
     
     def on_modify_error(self, error_msg):
+        self.modify_button.setEnabled(True)  # Re-enable button on error
         QMessageBox.critical(self, "Modification Error", f"Failed to modify date: {error_msg}")
         self.statusBar().showMessage("Error modifying date")
+    
+    def closeEvent(self, event):
+        """Properly clean up threads when closing the application."""
+        # Wait for all threads to finish
+        threads_to_wait = [
+            self.connection_thread,
+            self.pdf_thread, 
+            self.modify_thread
+        ]
+        
+        for thread in threads_to_wait:
+            if thread and thread.isRunning():
+                thread.quit()
+                thread.wait(1000)  # Wait up to 1 second
+                if thread.isRunning():
+                    thread.terminate()  # Force terminate if still running
+                    thread.wait()
+        
+        # Disconnect from NAS if connected
+        if self.nas_connection:
+            try:
+                self.nas_connection.disconnect()
+            except:
+                pass
+        
+        # Clean up temporary PDF file
+        if self.temp_pdf_path and os.path.exists(self.temp_pdf_path):
+            try:
+                os.remove(self.temp_pdf_path)
+            except:
+                pass
+        
+        # Close PDF document
+        if self.current_pdf_doc:
+            try:
+                self.current_pdf_doc.close()
+            except:
+                pass
+        
+        event.accept()
 
 
 def main():
