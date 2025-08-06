@@ -7,16 +7,20 @@ Connects to a NAS drive via SMB, allows browsing PDFs and modifying their dates.
 import os
 import sys
 import tempfile
-import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
 from datetime import datetime
-import threading
 from pathlib import Path
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QListWidget, QGroupBox,
+    QSplitter, QMessageBox, QScrollArea, QGridLayout, QTextEdit
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtGui import QPixmap, QImage, QPalette
 
 from smb.SMBConnection import SMBConnection
 from smb.smb_structs import OperationFailure
 import fitz  # PyMuPDF
-from PIL import Image, ImageTk
 
 
 class NASConnection:
@@ -140,242 +144,321 @@ class NASConnection:
                     os.remove(temp_path)
 
 
-class PDFViewerApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("NAS PDF Date Modifier")
-        self.root.geometry("1200x800")
-        
+class ConnectionThread(QThread):
+    success = pyqtSignal(list)
+    error = pyqtSignal(str)
+    
+    def __init__(self, nas_ip, username, password, share_name, path):
+        super().__init__()
+        self.nas_ip = nas_ip
+        self.username = username
+        self.password = password
+        self.share_name = share_name
+        self.path = path
+        self.nas_connection = None
+    
+    def run(self):
+        try:
+            self.nas_connection = NASConnection(
+                self.nas_ip, self.username, self.password, self.share_name
+            )
+            self.nas_connection.connect()
+            files = self.nas_connection.list_pdf_files(self.path or '/')
+            self.success.emit(files)
+        except Exception as e:
+            self.error.emit(str(e))
+    
+    def get_connection(self):
+        return self.nas_connection
+
+
+class PDFLoadThread(QThread):
+    loaded = pyqtSignal(object)
+    error = pyqtSignal(str)
+    
+    def __init__(self, nas_connection, file_info):
+        super().__init__()
+        self.nas_connection = nas_connection
+        self.file_info = file_info
+    
+    def run(self):
+        try:
+            temp_path = tempfile.mktemp(suffix='.pdf')
+            self.nas_connection.download_file(self.file_info['path'], temp_path)
+            
+            pdf_doc = fitz.open(temp_path)
+            
+            self.loaded.emit({
+                'doc': pdf_doc,
+                'temp_path': temp_path,
+                'file_info': self.file_info
+            })
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class DateModifyThread(QThread):
+    success = pyqtSignal()
+    error = pyqtSignal(str)
+    
+    def __init__(self, nas_connection, remote_path, new_date):
+        super().__init__()
+        self.nas_connection = nas_connection
+        self.remote_path = remote_path
+        self.new_date = new_date
+    
+    def run(self):
+        try:
+            self.nas_connection.set_file_times(self.remote_path, self.new_date)
+            self.success.emit()
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class PDFViewerApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
         self.nas_connection = None
         self.pdf_files = []
-        self.current_file_index = 0
+        self.current_file_index = -1
         self.current_pdf_doc = None
         self.current_pdf_path = None
         self.temp_pdf_path = None
         self.current_page = 0
         self.total_pages = 0
         
-        self.setup_ui()
+        self.init_ui()
     
-    def setup_ui(self):
-        """Create the main user interface."""
-        # Main container
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+    def init_ui(self):
+        self.setWindowTitle("NAS PDF Date Modifier")
+        self.setGeometry(100, 100, 1200, 800)
         
-        # Connection frame
-        connection_frame = ttk.LabelFrame(main_frame, text="NAS Connection", padding="10")
-        connection_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        # Central widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
         
-        # Connection fields
-        ttk.Label(connection_frame, text="NAS IP:").grid(row=0, column=0, sticky=tk.W)
-        self.nas_ip_var = tk.StringVar()
-        ttk.Entry(connection_frame, textvariable=self.nas_ip_var, width=20).grid(row=0, column=1, padx=5)
+        # Connection section
+        connection_group = QGroupBox("NAS Connection")
+        connection_layout = QGridLayout()
         
-        ttk.Label(connection_frame, text="Username:").grid(row=0, column=2, sticky=tk.W, padx=(10, 0))
-        self.username_var = tk.StringVar()
-        ttk.Entry(connection_frame, textvariable=self.username_var, width=20).grid(row=0, column=3, padx=5)
+        connection_layout.addWidget(QLabel("NAS IP:"), 0, 0)
+        self.nas_ip_input = QLineEdit()
+        connection_layout.addWidget(self.nas_ip_input, 0, 1)
         
-        ttk.Label(connection_frame, text="Password:").grid(row=0, column=4, sticky=tk.W, padx=(10, 0))
-        self.password_var = tk.StringVar()
-        ttk.Entry(connection_frame, textvariable=self.password_var, show="*", width=20).grid(row=0, column=5, padx=5)
+        connection_layout.addWidget(QLabel("Username:"), 0, 2)
+        self.username_input = QLineEdit()
+        connection_layout.addWidget(self.username_input, 0, 3)
         
-        ttk.Label(connection_frame, text="Share:").grid(row=1, column=0, sticky=tk.W)
-        self.share_var = tk.StringVar()
-        ttk.Entry(connection_frame, textvariable=self.share_var, width=20).grid(row=1, column=1, padx=5)
+        connection_layout.addWidget(QLabel("Password:"), 0, 4)
+        self.password_input = QLineEdit()
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        connection_layout.addWidget(self.password_input, 0, 5)
         
-        ttk.Label(connection_frame, text="Path:").grid(row=1, column=2, sticky=tk.W, padx=(10, 0))
-        self.path_var = tk.StringVar()
-        ttk.Entry(connection_frame, textvariable=self.path_var, width=40).grid(row=1, column=3, columnspan=2, padx=5)
+        connection_layout.addWidget(QLabel("Share:"), 1, 0)
+        self.share_input = QLineEdit()
+        connection_layout.addWidget(self.share_input, 1, 1)
         
-        self.connect_button = ttk.Button(connection_frame, text="Connect", command=self.connect_to_nas)
-        self.connect_button.grid(row=1, column=5, padx=(10, 0))
+        connection_layout.addWidget(QLabel("Path:"), 1, 2)
+        self.path_input = QLineEdit()
+        self.path_input.setPlaceholderText("Leave empty for root")
+        connection_layout.addWidget(self.path_input, 1, 3, 1, 2)
         
-        # File list frame
-        file_frame = ttk.LabelFrame(main_frame, text="PDF Files", padding="10")
-        file_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 5))
+        self.connect_button = QPushButton("Connect")
+        self.connect_button.clicked.connect(self.connect_to_nas)
+        connection_layout.addWidget(self.connect_button, 1, 5)
         
-        # File listbox with scrollbar
-        list_scroll = ttk.Scrollbar(file_frame)
-        list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        connection_group.setLayout(connection_layout)
+        main_layout.addWidget(connection_group)
         
-        self.file_listbox = tk.Listbox(file_frame, yscrollcommand=list_scroll.set, width=40, height=20)
-        self.file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        list_scroll.config(command=self.file_listbox.yview)
+        # Main content area with splitter
+        splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        self.file_listbox.bind('<<ListboxSelect>>', self.on_file_select)
+        # File list
+        file_group = QGroupBox("PDF Files")
+        file_layout = QVBoxLayout()
         
-        # PDF viewer frame
-        viewer_frame = ttk.LabelFrame(main_frame, text="PDF Preview", padding="10")
-        viewer_frame.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.file_list = QListWidget()
+        self.file_list.itemSelectionChanged.connect(self.on_file_select)
+        file_layout.addWidget(self.file_list)
+        
+        file_group.setLayout(file_layout)
+        splitter.addWidget(file_group)
+        
+        # PDF viewer
+        viewer_group = QGroupBox("PDF Preview")
+        viewer_layout = QVBoxLayout()
         
         # Navigation controls
-        nav_frame = ttk.Frame(viewer_frame)
-        nav_frame.pack(fill=tk.X, pady=(0, 10))
+        nav_layout = QHBoxLayout()
+        self.prev_page_btn = QPushButton("← Previous")
+        self.prev_page_btn.clicked.connect(self.prev_page)
+        self.prev_page_btn.setEnabled(False)
+        nav_layout.addWidget(self.prev_page_btn)
         
-        self.prev_page_btn = ttk.Button(nav_frame, text="← Previous", command=self.prev_page, state=tk.DISABLED)
-        self.prev_page_btn.pack(side=tk.LEFT)
+        self.page_label = QLabel("Page: 0/0")
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        nav_layout.addWidget(self.page_label)
         
-        self.page_label = ttk.Label(nav_frame, text="Page: 0/0")
-        self.page_label.pack(side=tk.LEFT, padx=20)
+        self.next_page_btn = QPushButton("Next →")
+        self.next_page_btn.clicked.connect(self.next_page)
+        self.next_page_btn.setEnabled(False)
+        nav_layout.addWidget(self.next_page_btn)
         
-        self.next_page_btn = ttk.Button(nav_frame, text="Next →", command=self.next_page, state=tk.DISABLED)
-        self.next_page_btn.pack(side=tk.LEFT)
+        nav_layout.addStretch()
+        viewer_layout.addLayout(nav_layout)
         
-        # PDF canvas with scrollbars
-        canvas_frame = ttk.Frame(viewer_frame)
-        canvas_frame.pack(fill=tk.BOTH, expand=True)
+        # PDF display area
+        self.pdf_scroll = QScrollArea()
+        self.pdf_scroll.setWidgetResizable(True)
+        self.pdf_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        v_scroll = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL)
-        v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.pdf_label = QLabel()
+        self.pdf_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pdf_label.setText("No PDF loaded")
+        self.pdf_label.setStyleSheet("QLabel { background-color: #f0f0f0; }")
+        self.pdf_scroll.setWidget(self.pdf_label)
         
-        h_scroll = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL)
-        h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+        viewer_layout.addWidget(self.pdf_scroll)
+        viewer_group.setLayout(viewer_layout)
+        splitter.addWidget(viewer_group)
         
-        self.pdf_canvas = tk.Canvas(canvas_frame, bg="gray", 
-                                    yscrollcommand=v_scroll.set,
-                                    xscrollcommand=h_scroll.set)
-        self.pdf_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Set splitter proportions
+        splitter.setSizes([400, 800])
+        main_layout.addWidget(splitter)
         
-        v_scroll.config(command=self.pdf_canvas.yview)
-        h_scroll.config(command=self.pdf_canvas.xview)
+        # Date modification section
+        date_group = QGroupBox("Date Modification")
+        date_layout = QHBoxLayout()
         
-        # Date modification frame
-        date_frame = ttk.LabelFrame(main_frame, text="Date Modification", padding="10")
-        date_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+        date_layout.addWidget(QLabel("Current Modified Date:"))
+        self.current_date_label = QLabel("No file selected")
+        date_layout.addWidget(self.current_date_label)
         
-        ttk.Label(date_frame, text="Current Modified Date:").grid(row=0, column=0, sticky=tk.W)
-        self.current_date_label = ttk.Label(date_frame, text="No file selected")
-        self.current_date_label.grid(row=0, column=1, padx=10)
+        date_layout.addStretch()
         
-        ttk.Label(date_frame, text="New Date:").grid(row=0, column=2, sticky=tk.W, padx=(20, 0))
-        self.new_date_var = tk.StringVar()
-        self.new_date_entry = ttk.Entry(date_frame, textvariable=self.new_date_var, width=20)
-        self.new_date_entry.grid(row=0, column=3, padx=10)
+        date_layout.addWidget(QLabel("New Date:"))
+        self.new_date_input = QLineEdit()
+        self.new_date_input.setPlaceholderText("YYYY-MM-DD HH:MM:SS")
+        date_layout.addWidget(self.new_date_input)
         
-        ttk.Label(date_frame, text="(Format: YYYY-MM-DD HH:MM:SS)").grid(row=0, column=4, padx=5)
+        self.modify_button = QPushButton("Modify Date")
+        self.modify_button.clicked.connect(self.modify_file_date)
+        self.modify_button.setEnabled(False)
+        date_layout.addWidget(self.modify_button)
         
-        self.modify_button = ttk.Button(date_frame, text="Modify Date", command=self.modify_file_date, state=tk.DISABLED)
-        self.modify_button.grid(row=0, column=5, padx=10)
+        self.next_file_button = QPushButton("Next File →")
+        self.next_file_button.clicked.connect(self.next_file)
+        self.next_file_button.setEnabled(False)
+        date_layout.addWidget(self.next_file_button)
         
-        self.next_file_button = ttk.Button(date_frame, text="Next File →", command=self.next_file, state=tk.DISABLED)
-        self.next_file_button.grid(row=0, column=6)
+        date_group.setLayout(date_layout)
+        main_layout.addWidget(date_group)
         
         # Status bar
-        self.status_var = tk.StringVar(value="Ready. Please connect to NAS.")
-        status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN)
-        status_bar.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
-        
-        # Configure grid weights
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=3)
-        main_frame.rowconfigure(1, weight=1)
+        self.statusBar().showMessage("Ready. Please connect to NAS.")
     
     def connect_to_nas(self):
-        """Connect to the NAS and list PDF files."""
-        nas_ip = self.nas_ip_var.get()
-        username = self.username_var.get()
-        password = self.password_var.get()
-        share = self.share_var.get()
-        path = self.path_var.get()
+        nas_ip = self.nas_ip_input.text()
+        username = self.username_input.text()
+        password = self.password_input.text()
+        share = self.share_input.text()
+        path = self.path_input.text()
         
         if not all([nas_ip, username, password, share]):
-            messagebox.showerror("Error", "Please fill in all connection fields")
+            QMessageBox.critical(self, "Error", "Please fill in all connection fields")
             return
         
-        self.status_var.set("Connecting to NAS...")
-        self.connect_button.config(state=tk.DISABLED)
+        self.statusBar().showMessage("Connecting to NAS...")
+        self.connect_button.setEnabled(False)
         
-        def connect_thread():
-            try:
-                self.nas_connection = NASConnection(nas_ip, username, password, share)
-                self.nas_connection.connect()
-                
-                self.pdf_files = self.nas_connection.list_pdf_files(path or '/')
-                
-                self.root.after(0, self.on_connection_success)
-            except Exception as e:
-                self.root.after(0, lambda: self.on_connection_error(str(e)))
-        
-        threading.Thread(target=connect_thread, daemon=True).start()
+        self.connection_thread = ConnectionThread(nas_ip, username, password, share, path)
+        self.connection_thread.success.connect(self.on_connection_success)
+        self.connection_thread.error.connect(self.on_connection_error)
+        self.connection_thread.start()
     
-    def on_connection_success(self):
-        """Handle successful NAS connection."""
-        self.status_var.set(f"Connected. Found {len(self.pdf_files)} PDF files.")
-        self.connect_button.config(text="Disconnect", state=tk.NORMAL, command=self.disconnect_from_nas)
+    def on_connection_success(self, files):
+        self.nas_connection = self.connection_thread.get_connection()
+        self.pdf_files = files
+        
+        self.statusBar().showMessage(f"Connected. Found {len(files)} PDF files.")
+        self.connect_button.setText("Disconnect")
+        self.connect_button.setEnabled(True)
+        self.connect_button.clicked.disconnect()
+        self.connect_button.clicked.connect(self.disconnect_from_nas)
         
         # Populate file list
-        self.file_listbox.delete(0, tk.END)
-        for file_info in self.pdf_files:
+        self.file_list.clear()
+        for file_info in files:
             display_text = f"{file_info['filename']} ({file_info['modified'].strftime('%Y-%m-%d %H:%M')})"
-            self.file_listbox.insert(tk.END, display_text)
+            self.file_list.addItem(display_text)
         
-        if self.pdf_files:
-            self.file_listbox.selection_set(0)
-            self.on_file_select(None)
+        if files:
+            self.file_list.setCurrentRow(0)
     
     def on_connection_error(self, error_msg):
-        """Handle NAS connection error."""
-        self.status_var.set("Connection failed")
-        self.connect_button.config(state=tk.NORMAL)
-        messagebox.showerror("Connection Error", error_msg)
+        self.statusBar().showMessage("Connection failed")
+        self.connect_button.setEnabled(True)
+        QMessageBox.critical(self, "Connection Error", error_msg)
     
     def disconnect_from_nas(self):
-        """Disconnect from NAS."""
         if self.nas_connection:
             self.nas_connection.disconnect()
             self.nas_connection = None
         
-        self.file_listbox.delete(0, tk.END)
+        self.file_list.clear()
         self.pdf_files = []
         self.clear_pdf_viewer()
-        self.connect_button.config(text="Connect", command=self.connect_to_nas)
-        self.status_var.set("Disconnected from NAS")
+        
+        self.connect_button.setText("Connect")
+        self.connect_button.clicked.disconnect()
+        self.connect_button.clicked.connect(self.connect_to_nas)
+        
+        self.statusBar().showMessage("Disconnected from NAS")
     
-    def on_file_select(self, event):
-        """Handle file selection from list."""
-        selection = self.file_listbox.curselection()
-        if not selection:
+    def on_file_select(self):
+        current_item = self.file_list.currentItem()
+        if not current_item:
             return
         
-        self.current_file_index = selection[0]
+        self.current_file_index = self.file_list.currentRow()
         file_info = self.pdf_files[self.current_file_index]
         
-        self.current_date_label.config(text=file_info['modified'].strftime('%Y-%m-%d %H:%M:%S'))
-        self.new_date_var.set(file_info['modified'].strftime('%Y-%m-%d %H:%M:%S'))
+        self.current_date_label.setText(file_info['modified'].strftime('%Y-%m-%d %H:%M:%S'))
+        self.new_date_input.setText(file_info['modified'].strftime('%Y-%m-%d %H:%M:%S'))
         
-        self.status_var.set(f"Loading {file_info['filename']}...")
+        self.statusBar().showMessage(f"Loading {file_info['filename']}...")
         
-        # Download and display PDF
-        threading.Thread(target=self.load_pdf, args=(file_info,), daemon=True).start()
+        # Load PDF in background
+        self.pdf_thread = PDFLoadThread(self.nas_connection, file_info)
+        self.pdf_thread.loaded.connect(self.on_pdf_loaded)
+        self.pdf_thread.error.connect(self.on_pdf_error)
+        self.pdf_thread.start()
     
-    def load_pdf(self, file_info):
-        """Download and load PDF for viewing."""
-        try:
-            # Create temporary file
-            self.temp_pdf_path = tempfile.mktemp(suffix='.pdf')
-            self.current_pdf_path = file_info['path']
-            
-            # Download file
-            self.nas_connection.download_file(file_info['path'], self.temp_pdf_path)
-            
-            # Load PDF
-            self.current_pdf_doc = fitz.open(self.temp_pdf_path)
-            self.total_pages = len(self.current_pdf_doc)
-            self.current_page = 0
-            
-            self.root.after(0, self.display_pdf_page)
-            self.root.after(0, lambda: self.status_var.set(f"Loaded {file_info['filename']}"))
-            self.root.after(0, lambda: self.modify_button.config(state=tk.NORMAL))
-            self.root.after(0, lambda: self.next_file_button.config(state=tk.NORMAL))
-            
-        except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to load PDF: {str(e)}"))
-            self.root.after(0, lambda: self.status_var.set("Error loading PDF"))
+    def on_pdf_loaded(self, data):
+        # Clean up previous PDF if exists
+        if self.current_pdf_doc:
+            self.current_pdf_doc.close()
+        if self.temp_pdf_path and os.path.exists(self.temp_pdf_path):
+            os.remove(self.temp_pdf_path)
+        
+        self.current_pdf_doc = data['doc']
+        self.temp_pdf_path = data['temp_path']
+        self.current_pdf_path = data['file_info']['path']
+        self.total_pages = len(self.current_pdf_doc)
+        self.current_page = 0
+        
+        self.display_pdf_page()
+        
+        self.statusBar().showMessage(f"Loaded {data['file_info']['filename']}")
+        self.modify_button.setEnabled(True)
+        self.next_file_button.setEnabled(True)
+    
+    def on_pdf_error(self, error_msg):
+        QMessageBox.critical(self, "Error", f"Failed to load PDF: {error_msg}")
+        self.statusBar().showMessage("Error loading PDF")
     
     def display_pdf_page(self):
-        """Display current page of PDF."""
         if not self.current_pdf_doc:
             return
         
@@ -386,53 +469,43 @@ class PDFViewerApp:
             # Render page to image
             mat = fitz.Matrix(1.5, 1.5)  # Scale factor
             pix = page.get_pixmap(matrix=mat)
-            img_data = pix.pil_tobytes(format="PNG")
             
-            # Convert to PIL Image
-            from io import BytesIO
-            img = Image.open(BytesIO(img_data))
+            # Convert to QImage
+            img_data = pix.tobytes("ppm")
+            qimg = QImage.fromData(img_data)
             
-            # Convert to PhotoImage
-            photo = ImageTk.PhotoImage(img)
-            
-            # Clear canvas and display image
-            self.pdf_canvas.delete("all")
-            self.pdf_canvas.create_image(0, 0, anchor=tk.NW, image=photo)
-            self.pdf_canvas.config(scrollregion=self.pdf_canvas.bbox("all"))
-            
-            # Keep reference to prevent garbage collection
-            self.pdf_canvas.image = photo
+            # Convert to QPixmap and display
+            pixmap = QPixmap.fromImage(qimg)
+            self.pdf_label.setPixmap(pixmap)
             
             # Update page label
-            self.page_label.config(text=f"Page: {self.current_page + 1}/{self.total_pages}")
+            self.page_label.setText(f"Page: {self.current_page + 1}/{self.total_pages}")
             
             # Update navigation buttons
-            self.prev_page_btn.config(state=tk.NORMAL if self.current_page > 0 else tk.DISABLED)
-            self.next_page_btn.config(state=tk.NORMAL if self.current_page < self.total_pages - 1 else tk.DISABLED)
+            self.prev_page_btn.setEnabled(self.current_page > 0)
+            self.next_page_btn.setEnabled(self.current_page < self.total_pages - 1)
             
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to display page: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to display page: {str(e)}")
     
     def prev_page(self):
-        """Go to previous page."""
         if self.current_page > 0:
             self.current_page -= 1
             self.display_pdf_page()
     
     def next_page(self):
-        """Go to next page."""
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
             self.display_pdf_page()
     
     def clear_pdf_viewer(self):
-        """Clear the PDF viewer."""
-        self.pdf_canvas.delete("all")
-        self.page_label.config(text="Page: 0/0")
-        self.prev_page_btn.config(state=tk.DISABLED)
-        self.next_page_btn.config(state=tk.DISABLED)
-        self.modify_button.config(state=tk.DISABLED)
-        self.next_file_button.config(state=tk.DISABLED)
+        self.pdf_label.clear()
+        self.pdf_label.setText("No PDF loaded")
+        self.page_label.setText("Page: 0/0")
+        self.prev_page_btn.setEnabled(False)
+        self.next_page_btn.setEnabled(False)
+        self.modify_button.setEnabled(False)
+        self.next_file_button.setEnabled(False)
         
         if self.current_pdf_doc:
             self.current_pdf_doc.close()
@@ -443,58 +516,55 @@ class PDFViewerApp:
             self.temp_pdf_path = None
     
     def modify_file_date(self):
-        """Modify the date of the current file."""
-        new_date_str = self.new_date_var.get()
+        new_date_str = self.new_date_input.text()
         
         try:
             # Parse the new date
             new_date = datetime.strptime(new_date_str, '%Y-%m-%d %H:%M:%S')
             
-            # Modify the file on NAS
-            self.status_var.set("Modifying file date...")
+            self.statusBar().showMessage("Modifying file date...")
             
-            def modify_thread():
-                try:
-                    self.nas_connection.set_file_times(self.current_pdf_path, new_date)
-                    
-                    # Update local file info
-                    self.pdf_files[self.current_file_index]['modified'] = new_date
-                    
-                    # Update display
-                    display_text = f"{self.pdf_files[self.current_file_index]['filename']} ({new_date.strftime('%Y-%m-%d %H:%M')})"
-                    self.file_listbox.delete(self.current_file_index)
-                    self.file_listbox.insert(self.current_file_index, display_text)
-                    self.file_listbox.selection_set(self.current_file_index)
-                    
-                    self.root.after(0, lambda: self.current_date_label.config(text=new_date.strftime('%Y-%m-%d %H:%M:%S')))
-                    self.root.after(0, lambda: self.status_var.set("Date modified successfully"))
-                    self.root.after(0, lambda: messagebox.showinfo("Success", "File date modified successfully"))
-                    
-                except Exception as e:
-                    self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to modify date: {str(e)}"))
-                    self.root.after(0, lambda: self.status_var.set("Error modifying date"))
-            
-            threading.Thread(target=modify_thread, daemon=True).start()
+            # Modify in background
+            self.modify_thread = DateModifyThread(
+                self.nas_connection, 
+                self.current_pdf_path, 
+                new_date
+            )
+            self.modify_thread.success.connect(lambda: self.on_modify_success(new_date))
+            self.modify_thread.error.connect(self.on_modify_error)
+            self.modify_thread.start()
             
         except ValueError:
-            messagebox.showerror("Error", "Invalid date format. Use YYYY-MM-DD HH:MM:SS")
+            QMessageBox.critical(self, "Error", "Invalid date format. Use YYYY-MM-DD HH:MM:SS")
+    
+    def on_modify_success(self, new_date):
+        # Update local file info
+        self.pdf_files[self.current_file_index]['modified'] = new_date
+        
+        # Update display
+        display_text = f"{self.pdf_files[self.current_file_index]['filename']} ({new_date.strftime('%Y-%m-%d %H:%M')})"
+        self.file_list.item(self.current_file_index).setText(display_text)
+        
+        self.current_date_label.setText(new_date.strftime('%Y-%m-%d %H:%M:%S'))
+        self.statusBar().showMessage("Date modified successfully")
+        QMessageBox.information(self, "Success", "File date modified successfully")
+    
+    def on_modify_error(self, error_msg):
+        QMessageBox.critical(self, "Error", f"Failed to modify date: {error_msg}")
+        self.statusBar().showMessage("Error modifying date")
     
     def next_file(self):
-        """Move to the next file in the list."""
         if self.current_file_index < len(self.pdf_files) - 1:
-            self.file_listbox.selection_clear(self.current_file_index)
-            self.current_file_index += 1
-            self.file_listbox.selection_set(self.current_file_index)
-            self.file_listbox.see(self.current_file_index)
-            self.on_file_select(None)
+            self.file_list.setCurrentRow(self.current_file_index + 1)
         else:
-            messagebox.showinfo("Info", "This is the last file in the list")
+            QMessageBox.information(self, "Info", "This is the last file in the list")
 
 
 def main():
-    root = tk.Tk()
-    app = PDFViewerApp(root)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    window = PDFViewerApp()
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
