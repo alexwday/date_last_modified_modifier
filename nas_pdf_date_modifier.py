@@ -279,18 +279,44 @@ class PDFLoadThread(QThread):
         super().__init__()
         self.nas_connection = nas_connection
         self.file_info = file_info
+        self._is_running = True
     
     def run(self):
         try:
+            if not self._is_running:
+                return
+                
             self.progress.emit(25)
             temp_path = tempfile.mktemp(suffix='.pdf')
             
+            if not self._is_running:
+                return
+                
             self.progress.emit(50)
             self.nas_connection.download_file(self.file_info['path'], temp_path)
             
+            if not self._is_running:
+                # Clean up temp file if thread was stopped
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except:
+                        pass
+                return
+                
             self.progress.emit(75)
             pdf_doc = fitz.open(temp_path)
             
+            if not self._is_running:
+                # Clean up if thread was stopped
+                pdf_doc.close()
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except:
+                        pass
+                return
+                
             self.progress.emit(100)
             self.loaded.emit({
                 'doc': pdf_doc,
@@ -299,6 +325,17 @@ class PDFLoadThread(QThread):
             })
         except Exception as e:
             self.error.emit(str(e))
+            # Clean up on error
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+    
+    def quit(self):
+        """Override quit to set running flag."""
+        self._is_running = False
+        super().quit()
 
 
 class DateModifyThread(QThread):
@@ -734,9 +771,21 @@ class PDFViewerApp(QMainWindow):
         self.load_progress.setValue(0)
         
         # Load PDF
-        # Clean up any existing thread
+        # Clean up any existing thread - properly terminate if running
         if self.pdf_thread and self.pdf_thread.isRunning():
-            self.pdf_thread.wait()
+            # Disconnect signals to prevent callbacks from old thread
+            try:
+                self.pdf_thread.loaded.disconnect()
+                self.pdf_thread.error.disconnect()
+                self.pdf_thread.progress.disconnect()
+            except:
+                pass
+            
+            # Request thread to quit and wait briefly
+            self.pdf_thread.quit()
+            if not self.pdf_thread.wait(500):  # Wait max 500ms
+                self.pdf_thread.terminate()  # Force terminate if still running
+                self.pdf_thread.wait()
             
         self.pdf_thread = PDFLoadThread(self.nas_connection, file_info)
         self.pdf_thread.loaded.connect(self.on_pdf_loaded)
@@ -746,11 +795,17 @@ class PDFViewerApp(QMainWindow):
         self.pdf_thread.start()
     
     def on_pdf_loaded(self, data):
-        # Clean up previous PDF
+        # Clean up previous PDF - add error handling
         if self.current_pdf_doc:
-            self.current_pdf_doc.close()
+            try:
+                self.current_pdf_doc.close()
+            except:
+                pass
         if self.temp_pdf_path and os.path.exists(self.temp_pdf_path):
-            os.remove(self.temp_pdf_path)
+            try:
+                os.remove(self.temp_pdf_path)
+            except:
+                pass
         
         self.current_pdf_doc = data['doc']
         self.temp_pdf_path = data['temp_path']
