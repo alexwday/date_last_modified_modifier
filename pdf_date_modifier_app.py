@@ -76,6 +76,8 @@ class PDFDateModifierApp(QMainWindow):
         self.current_file_index = -1
         self.current_pdf_path: Optional[Path] = None
         self.temp_pdf_path: Optional[Path] = None
+        self.current_page = 0
+        self.total_pages = 0
         
         # Initialize UI
         self.init_ui()
@@ -258,7 +260,7 @@ class PDFDateModifierApp(QMainWindow):
         
         # Apply date button
         apply_action = QAction("Apply Date", self)
-        apply_action.triggered.connect(self.apply_date_modification)
+        apply_action.triggered.connect(self.apply_modifications)
         toolbar.addAction(apply_action)
     
     def create_file_list_panel(self) -> QWidget:
@@ -350,40 +352,67 @@ class PDFDateModifierApp(QMainWindow):
         return panel
     
     def create_date_panel(self) -> QGroupBox:
-        """Create the date modification panel."""
+        """Create the date modification and rename panel."""
         
-        group = QGroupBox("Date Modification")
-        layout = QHBoxLayout()
+        group = QGroupBox("File Operations")
+        main_layout = QVBoxLayout()
+        
+        # Date modification row
+        date_layout = QHBoxLayout()
         
         # Current date
-        layout.addWidget(QLabel("Current:"))
+        date_layout.addWidget(QLabel("Current Date:"))
         self.current_date_label = QLabel("No file selected")
         self.current_date_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(self.current_date_label)
+        date_layout.addWidget(self.current_date_label)
         
-        layout.addStretch()
+        date_layout.addStretch()
         
         # New date
-        layout.addWidget(QLabel("New Date:"))
+        date_layout.addWidget(QLabel("New Date:"))
         self.date_time_edit = QDateTimeEdit()
         self.date_time_edit.setCalendarPopup(True)
         self.date_time_edit.setDateTime(QDateTime.currentDateTime())
         self.date_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-        layout.addWidget(self.date_time_edit)
+        date_layout.addWidget(self.date_time_edit)
         
-        # Buttons
+        # Date buttons
         self.today_btn = QPushButton("Today")
         self.today_btn.clicked.connect(lambda: self.date_time_edit.setDateTime(QDateTime.currentDateTime()))
-        layout.addWidget(self.today_btn)
+        date_layout.addWidget(self.today_btn)
         
-        self.apply_btn = QPushButton("Apply")
-        self.apply_btn.clicked.connect(self.apply_date_modification)
+        main_layout.addLayout(date_layout)
+        
+        # Rename row
+        rename_layout = QHBoxLayout()
+        
+        # Current filename
+        rename_layout.addWidget(QLabel("Filename:"))
+        self.current_filename_label = QLabel("No file selected")
+        self.current_filename_label.setStyleSheet("font-weight: bold;")
+        self.current_filename_label.setMinimumWidth(200)
+        rename_layout.addWidget(self.current_filename_label)
+        
+        rename_layout.addStretch()
+        
+        # New filename
+        rename_layout.addWidget(QLabel("Rename to:"))
+        self.rename_input = QLineEdit()
+        self.rename_input.setPlaceholderText("New filename (optional)")
+        self.rename_input.setMinimumWidth(250)
+        rename_layout.addWidget(self.rename_input)
+        
+        # Apply button
+        self.apply_btn = QPushButton("Apply Changes")
+        self.apply_btn.clicked.connect(self.apply_modifications)
         self.apply_btn.setEnabled(False)
-        self.apply_btn.setStyleSheet("QPushButton { font-weight: bold; }")
-        layout.addWidget(self.apply_btn)
+        self.apply_btn.setStyleSheet("QPushButton { font-weight: bold; background-color: #4CAF50; color: white; padding: 5px 15px; }")
+        rename_layout.addWidget(self.apply_btn)
         
-        group.setLayout(layout)
-        group.setMaximumHeight(100)
+        main_layout.addLayout(rename_layout)
+        
+        group.setLayout(main_layout)
+        group.setMaximumHeight(120)
         
         return group
     
@@ -398,7 +427,7 @@ class PDFDateModifierApp(QMainWindow):
             ("Ctrl++", self.zoom_in),
             ("Ctrl+-", self.zoom_out),
             ("Ctrl+0", self.zoom_reset),
-            ("Ctrl+M", self.apply_date_modification),
+            ("Ctrl+M", self.apply_modifications),
             ("F5", self.refresh_file_list),
         ]
         
@@ -574,6 +603,13 @@ class PDFDateModifierApp(QMainWindow):
             file_info['modified'].strftime('%Y-%m-%d %H:%M:%S')
         )
         
+        # Update filename display
+        self.current_filename_label.setText(file_info['filename'])
+        
+        # Pre-populate rename input with current filename (without extension)
+        filename_without_ext = file_info['filename'].rsplit('.', 1)[0] if '.' in file_info['filename'] else file_info['filename']
+        self.rename_input.setText(filename_without_ext)
+        
         # Set new date to current date
         qt_datetime = QDateTime(
             file_info['modified'].year,
@@ -622,7 +658,7 @@ class PDFDateModifierApp(QMainWindow):
             self.thread_manager.submit_task(
                 download_task,
                 priority=TaskPriority.HIGH,
-                callback=lambda _: self.display_pdf_preview(),
+                callback=lambda _: self.display_pdf_preview(reset_page=True),
                 error_callback=lambda e: self.pdf_load_error(e),
                 task_name=f"Download {file_info['filename']}"
             )
@@ -633,17 +669,23 @@ class PDFDateModifierApp(QMainWindow):
             self.logger.error(f"Failed to load PDF: {e}")
             self.pdf_load_error(e)
     
-    def display_pdf_preview(self):
+    def display_pdf_preview(self, reset_page=False):
         """Display PDF preview."""
         
         if not self.temp_pdf_path or not self.temp_pdf_path.exists():
             return
         
         try:
-            # Get preview image
+            # Get PDF info if we're resetting or don't have it
+            if reset_page or self.total_pages == 0:
+                info = self.pdf_processor.extract_pdf_info(self.temp_pdf_path)
+                self.total_pages = info.get('page_count', 0)
+                self.current_page = 0
+            
+            # Get preview image for current page
             preview_bytes = self.pdf_processor.get_pdf_preview(
                 self.temp_pdf_path,
-                page_num=0,
+                page_num=self.current_page,
                 zoom=self.zoom_slider.value() / 100.0
             )
             
@@ -657,13 +699,11 @@ class PDFDateModifierApp(QMainWindow):
                 self.pdf_label.resize(pixmap.size())
                 
                 # Update page info
-                info = self.pdf_processor.extract_pdf_info(self.temp_pdf_path)
-                page_count = info.get('page_count', 0)
-                self.page_label.setText(f"Page: 1/{page_count}")
+                self.page_label.setText(f"Page: {self.current_page + 1}/{self.total_pages}")
                 
-                # Enable navigation if multiple pages
-                self.prev_page_btn.setEnabled(False)
-                self.next_page_btn.setEnabled(page_count > 1)
+                # Enable/disable navigation buttons
+                self.prev_page_btn.setEnabled(self.current_page > 0)
+                self.next_page_btn.setEnabled(self.current_page < self.total_pages - 1)
                 
                 self.update_status("PDF loaded successfully")
             
@@ -677,8 +717,8 @@ class PDFDateModifierApp(QMainWindow):
         self.pdf_label.setText(f"Error loading PDF:\n{error}")
         self.update_status("Error loading PDF")
     
-    def apply_date_modification(self):
-        """Apply date modification to current file."""
+    def apply_modifications(self):
+        """Apply date modification and/or rename to current file."""
         
         if not self.connection_manager or not self.current_pdf_path:
             return
@@ -695,19 +735,34 @@ class PDFDateModifierApp(QMainWindow):
                 qt_datetime.time().second()
             )
             
-            self.update_status("Applying date modification...")
+            # Check if we need to rename
+            new_filename = self.rename_input.text().strip()
+            current_item = self.file_list.currentItem()
+            if not isinstance(current_item, FileListItem):
+                return
+                
+            current_filename = current_item.file_info['filename']
+            needs_rename = False
+            new_path = self.current_pdf_path
+            
+            if new_filename:
+                # Ensure .pdf extension
+                if not new_filename.endswith('.pdf'):
+                    new_filename += '.pdf'
+                
+                # Check if filename is different
+                if new_filename != current_filename:
+                    needs_rename = True
+                    # Construct new path
+                    new_path = Path(str(self.current_pdf_path).rsplit('/', 1)[0]) / new_filename
+            
+            self.update_status("Applying modifications...")
             self.progress_bar.setVisible(True)
             self.progress_bar.setRange(0, 100)
             
-            # Use the atomic modify_file_date method that does everything in one operation
-            self.progress_bar.setValue(50)
+            # First, modify the date
+            self.progress_bar.setValue(33)
             
-            # This method will:
-            # 1. Download the file
-            # 2. Update PDF metadata (if enabled)
-            # 3. Modify the file date locally using touch
-            # 4. Delete the remote file
-            # 5. Re-upload with the modified date
             success = self.connection_manager.modify_file_date(
                 str(self.current_pdf_path), 
                 new_date,
@@ -716,6 +771,48 @@ class PDFDateModifierApp(QMainWindow):
             
             if not success:
                 raise Exception("Failed to modify file date")
+            
+            # Then rename if needed
+            if needs_rename:
+                self.progress_bar.setValue(66)
+                self.update_status("Renaming file...")
+                
+                # Use connection manager to rename the file on NAS
+                # We'll need to download, delete old, upload with new name
+                import tempfile
+                temp_file = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+                temp_path = Path(temp_file.name)
+                temp_file.close()
+                
+                try:
+                    # Download the file (which now has the new date)
+                    self.connection_manager.download_file(str(self.current_pdf_path), str(temp_path))
+                    
+                    # Delete the old file
+                    self.connection_manager.delete_file(str(self.current_pdf_path))
+                    
+                    # Upload with new name
+                    self.connection_manager.upload_file(str(temp_path), str(new_path), preserve_times=True)
+                    
+                    # Update current path
+                    self.current_pdf_path = new_path
+                    
+                    # Update the file info in the list item
+                    current_item.file_info['filename'] = new_filename
+                    current_item.file_info['path'] = str(new_path)
+                    current_item.update_display()
+                    
+                    # Update the filename label
+                    self.current_filename_label.setText(new_filename)
+                    
+                    self.logger.info(f"Renamed file from {current_filename} to {new_filename}")
+                    
+                finally:
+                    # Clean up temp file
+                    try:
+                        temp_path.unlink()
+                    except:
+                        pass
             
             self.progress_bar.setValue(100)
             
@@ -898,13 +995,15 @@ class PDFDateModifierApp(QMainWindow):
     
     def previous_page(self):
         """Show previous PDF page."""
-        # TODO: Implement multi-page navigation
-        pass
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.display_pdf_preview()
     
     def next_page(self):
         """Show next PDF page."""
-        # TODO: Implement multi-page navigation
-        pass
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.display_pdf_preview()
     
     def on_zoom_changed(self, value: int):
         """Handle zoom change."""
