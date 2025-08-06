@@ -360,7 +360,8 @@ class PDFViewerApp(QMainWindow):
                 color: white;
             }}
             QLineEdit {{
-                padding: 6px;
+                min-height: 28px;
+                padding: 8px;
                 border: 1px solid {COLORS['secondary']};
                 border-radius: 4px;
                 background-color: white;
@@ -370,7 +371,8 @@ class PDFViewerApp(QMainWindow):
                 border: 2px solid {COLORS['accent']};
             }}
             QDateTimeEdit {{
-                padding: 6px;
+                min-height: 32px;
+                padding: 8px;
                 border: 1px solid {COLORS['secondary']};
                 border-radius: 4px;
                 background-color: white;
@@ -378,6 +380,11 @@ class PDFViewerApp(QMainWindow):
             }}
             QDateTimeEdit:focus {{
                 border: 2px solid {COLORS['accent']};
+            }}
+            QDateTimeEdit::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
             }}
             QSlider::groove:horizontal {{
                 height: 6px;
@@ -485,7 +492,7 @@ class PDFViewerApp(QMainWindow):
     def create_connection_panel(self, parent_layout):
         """Create the connection panel with improved layout."""
         connection_frame = QFrame()
-        connection_frame.setMaximumHeight(120)
+        connection_frame.setMaximumHeight(140)
         connection_frame.setStyleSheet(f"""
             QFrame {{
                 background-color: white;
@@ -518,12 +525,14 @@ class PDFViewerApp(QMainWindow):
         fields_layout.addWidget(QLabel("Server:"), 0, 0)
         self.nas_ip_input = QLineEdit()
         self.nas_ip_input.setPlaceholderText("192.168.1.100")
+        self.nas_ip_input.setFixedHeight(35)
         self.nas_ip_input.setMaximumWidth(150)
         fields_layout.addWidget(self.nas_ip_input, 0, 1)
         
         fields_layout.addWidget(QLabel("Username:"), 0, 2)
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("admin")
+        self.username_input.setFixedHeight(35)
         self.username_input.setMaximumWidth(150)
         fields_layout.addWidget(self.username_input, 0, 3)
         
@@ -531,6 +540,7 @@ class PDFViewerApp(QMainWindow):
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setPlaceholderText("••••••••")
+        self.password_input.setFixedHeight(35)
         self.password_input.setMaximumWidth(150)
         fields_layout.addWidget(self.password_input, 0, 5)
         
@@ -538,18 +548,21 @@ class PDFViewerApp(QMainWindow):
         fields_layout.addWidget(QLabel("Share:"), 1, 0)
         self.share_input = QLineEdit()
         self.share_input.setPlaceholderText("documents")
+        self.share_input.setFixedHeight(35)
         self.share_input.setMaximumWidth(150)
         fields_layout.addWidget(self.share_input, 1, 1)
         
         fields_layout.addWidget(QLabel("Base Path:"), 1, 2)
         self.base_path_input = QLineEdit()
         self.base_path_input.setPlaceholderText("/Archive/Scanned")
+        self.base_path_input.setFixedHeight(35)
         self.base_path_input.setMaximumWidth(200)
         fields_layout.addWidget(self.base_path_input, 1, 3, 1, 2)
         
         fields_layout.addWidget(QLabel("Folder:"), 1, 5)
         self.folder_input = QLineEdit()
         self.folder_input.setPlaceholderText("2024")
+        self.folder_input.setFixedHeight(35)
         self.folder_input.setMaximumWidth(150)
         fields_layout.addWidget(self.folder_input, 1, 6)
         
@@ -595,6 +608,7 @@ class PDFViewerApp(QMainWindow):
         # Search/filter bar
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("🔍 Search files...")
+        self.search_input.setFixedHeight(35)
         self.search_input.textChanged.connect(self.filter_files)
         file_layout.addWidget(self.search_input)
         
@@ -809,7 +823,8 @@ class PDFViewerApp(QMainWindow):
         self.date_time_edit.setDateTime(QDateTime.currentDateTime())
         self.date_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
         self.date_time_edit.setMinimumWidth(200)
-        self.date_time_edit.setStyleSheet("padding: 8px; font-size: 14px;")
+        self.date_time_edit.setFixedHeight(40)
+        self.date_time_edit.setStyleSheet("font-size: 14px;")
         date_input_layout.addWidget(self.date_time_edit)
         
         # Quick date buttons
