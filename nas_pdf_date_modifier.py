@@ -144,97 +144,71 @@ class NASConnection:
         if not self.connection:
             raise Exception("Not connected to NAS")
         
+        import calendar
+        import fitz
+        
+        # Convert to Unix timestamp
+        timestamp = calendar.timegm(modified_time.timetuple())
+        
+        # Create temporary files
+        temp_path = tempfile.mktemp(suffix='.pdf')
+        temp_modified_path = tempfile.mktemp(suffix='_modified.pdf')
+        
         try:
-            # Convert to Windows FILETIME format (100-nanosecond intervals since 1601)
-            # This is what SMB expects for timestamps
-            import calendar
-            timestamp = calendar.timegm(modified_time.timetuple())
+            # Download the original file
+            self.download_file(remote_path, temp_path)
             
-            # Create a temporary file with modified metadata
-            temp_path = tempfile.mktemp(suffix='.pdf')
-            temp_modified_path = tempfile.mktemp(suffix='_modified.pdf')
+            # Open with PyMuPDF and update metadata
+            pdf_doc = fitz.open(temp_path)
             
+            # Update PDF internal metadata (this is the most reliable part)
+            metadata = pdf_doc.metadata or {}
+            
+            # Format date for PDF metadata (D:YYYYMMDDHHmmSS)
+            pdf_date = modified_time.strftime("D:%Y%m%d%H%M%S")
+            metadata['modDate'] = pdf_date
+            metadata['creationDate'] = pdf_date  # Also update creation date
+            
+            # Set the metadata
+            pdf_doc.set_metadata(metadata)
+            
+            # Save the modified PDF
+            pdf_doc.save(temp_modified_path)
+            pdf_doc.close()
+            
+            # Set file system timestamps on the local file before upload
+            os.utime(temp_modified_path, (timestamp, timestamp))
+            
+            # Delete the original file on NAS first (helps ensure clean replacement)
             try:
-                # Download the original file
-                self.download_file(remote_path, temp_path)
-                
-                # Open with PyMuPDF and update metadata
-                import fitz
-                pdf_doc = fitz.open(temp_path)
-                
-                # Update PDF metadata with the new date
-                metadata = pdf_doc.metadata
-                if metadata is None:
-                    metadata = {}
-                
-                # Format date for PDF metadata (D:YYYYMMDDHHmmSS)
-                pdf_date = modified_time.strftime("D:%Y%m%d%H%M%S")
-                metadata['modDate'] = pdf_date
-                metadata['creationDate'] = pdf_date  # Also update creation date
-                
-                # Set the metadata
-                pdf_doc.set_metadata(metadata)
-                
-                # Save the modified PDF
-                pdf_doc.save(temp_modified_path)
-                pdf_doc.close()
-                
-                # Set file system timestamps on the local file
-                os.utime(temp_modified_path, (timestamp, timestamp))
-                
-                # Delete the original file on NAS first
-                try:
-                    self.connection.deleteFiles(self.share_name, remote_path)
-                except:
-                    pass  # File might not exist or permission issue
-                
-                # Upload the modified file
-                with open(temp_modified_path, 'rb') as local_file:
-                    self.connection.storeFile(
-                        self.share_name,
-                        remote_path,
-                        local_file
-                    )
-                
-                # Try to set the timestamp after upload
-                try:
-                    # Use the basic setPathInfo with just last_write_time
-                    self.connection.setPathInfo(
-                        self.share_name,
-                        remote_path,
-                        last_write_time=timestamp
-                    )
-                except Exception as e:
-                    # If setPathInfo fails, try using the SMB2 resetFileAttributes
-                    try:
-                        # Some NAS devices respond better to setting attributes
-                        file_obj = self.connection.getAttributes(self.share_name, remote_path)
-                        self.connection.resetFileAttributes(
-                            self.share_name,
-                            remote_path,
-                            file_attributes=file_obj.file_attributes,
-                            last_write_time=timestamp,
-                            last_access_time=timestamp
-                        )
-                    except:
-                        # If all methods fail, at least the PDF metadata is updated
-                        pass
-                
-                return True
-                
-            except Exception as e:
-                raise Exception(f"Failed to modify PDF date: {str(e)}")
-            finally:
-                # Clean up temporary files
-                for path in [temp_path, temp_modified_path]:
-                    if os.path.exists(path):
-                        try:
-                            os.remove(path)
-                        except:
-                            pass
-                            
+                self.connection.deleteFiles(self.share_name, remote_path)
+            except:
+                pass  # File might not exist or permission issue
+            
+            # Upload the modified file with its local timestamps
+            with open(temp_modified_path, 'rb') as local_file:
+                self.connection.storeFile(
+                    self.share_name,
+                    remote_path,
+                    local_file
+                )
+            
+            # Note: We're NOT attempting setPathInfo or resetFileAttributes anymore
+            # as research shows these methods don't exist or don't work for timestamps
+            # The PDF metadata update + file replacement is the most reliable approach
+            
+            return True
+            
         except Exception as e:
-            raise Exception(f"Failed to set file time: {str(e)}")
+            raise Exception(f"Failed to modify PDF: {str(e)}")
+        finally:
+            # Clean up temporary files
+            for path in [temp_path, temp_modified_path]:
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except:
+                        pass
 
 
 class ConnectionThread(QThread):
