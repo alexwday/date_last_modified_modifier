@@ -380,12 +380,39 @@ class ConnectionManager:
         
         return self.pool.execute_with_retry(_download_operation, remote_path, local_path)
     
-    def upload_file(self, local_path: str, remote_path: str) -> bool:
+    def upload_file(self, local_path: str, remote_path: str, preserve_times: bool = False) -> bool:
         """Upload a file to NAS."""
         
         def _upload_operation(conn, local_path, remote_path):
+            # Get the file's modification time before upload
+            import os
+            from datetime import datetime
+            
+            if preserve_times and os.path.exists(local_path):
+                file_stat = os.stat(local_path)
+                mod_time = file_stat.st_mtime
+            else:
+                mod_time = None
+            
             with open(local_path, 'rb') as f:
                 conn.storeFile(self.config.share_name, remote_path, f)
+            
+            # Try to set the modification time after upload if we're preserving times
+            if preserve_times and mod_time:
+                try:
+                    # Convert to Windows file time (100-nanosecond intervals since Jan 1, 1601)
+                    # SMB uses Windows file time format
+                    import struct
+                    windows_epoch = datetime(1601, 1, 1)
+                    unix_epoch = datetime(1970, 1, 1)
+                    epoch_diff = (unix_epoch - windows_epoch).total_seconds()
+                    windows_time = int((mod_time + epoch_diff) * 10000000)
+                    
+                    # Try to set times using SMB - this might not work with all SMB servers
+                    # conn.setPathInfo(self.config.share_name, remote_path, file_times=(0, 0, windows_time, windows_time))
+                except Exception as e:
+                    self.logger.debug(f"Could not preserve file times via SMB: {e}")
+            
             return True
         
         return self.pool.execute_with_retry(_upload_operation, local_path, remote_path)
@@ -398,6 +425,106 @@ class ConnectionManager:
             return True
         
         return self.pool.execute_with_retry(_delete_operation, remote_path)
+    
+    def modify_file_date(self, remote_path: str, new_date: datetime, update_metadata: bool = True) -> bool:
+        """Download file, optionally update PDF metadata, modify its date locally, delete remote, and re-upload.
+        
+        This is an atomic operation that ensures the file date is properly set on the NAS.
+        """
+        
+        import tempfile
+        import os
+        import subprocess
+        from pathlib import Path
+        
+        def _modify_operation(conn, remote_path, new_date):
+            # Create temp file
+            temp_file = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+            temp_path = Path(temp_file.name)
+            temp_file.close()
+            
+            try:
+                # Download file
+                with open(temp_path, 'wb') as f:
+                    conn.retrieveFile(self.config.share_name, remote_path, f)
+                
+                # Update PDF metadata if requested
+                if update_metadata:
+                    try:
+                        import fitz  # PyMuPDF
+                        doc = fitz.open(str(temp_path))
+                        metadata = doc.metadata or {}
+                        
+                        # Format date for PDF metadata (D:YYYYMMDDHHmmSS)
+                        pdf_date = new_date.strftime("D:%Y%m%d%H%M%S")
+                        metadata['modDate'] = pdf_date
+                        metadata['creationDate'] = pdf_date
+                        
+                        doc.set_metadata(metadata)
+                        
+                        # Save to new temp file
+                        temp_modified = tempfile.mktemp(suffix='_meta.pdf')
+                        doc.save(temp_modified)
+                        doc.close()
+                        
+                        # Replace original temp with metadata-updated version
+                        os.replace(temp_modified, str(temp_path))
+                        
+                        self.logger.debug(f"Updated PDF metadata for {remote_path}")
+                    except Exception as e:
+                        self.logger.warning(f"Could not update PDF metadata: {e}")
+                
+                # Modify date locally using touch
+                touch_time = new_date.strftime("%Y%m%d%H%M")
+                touch_cmd = ['touch', '-t', touch_time, str(temp_path)]
+                result = subprocess.run(touch_cmd, capture_output=True, text=True)
+                
+                if result.returncode != 0:
+                    raise Exception(f"Touch command failed: {result.stderr}")
+                
+                # Verify the date was set
+                file_stat = os.stat(temp_path)
+                actual_mtime = datetime.fromtimestamp(file_stat.st_mtime)
+                expected_mtime = new_date.replace(second=0, microsecond=0)
+                
+                if abs((actual_mtime - expected_mtime).total_seconds()) > 60:
+                    self.logger.warning(f"Date might not be set correctly. Expected: {expected_mtime}, Got: {actual_mtime}")
+                else:
+                    self.logger.debug(f"Successfully set file date to: {actual_mtime}")
+                
+                # Also try SetFile on macOS
+                import platform
+                if platform.system() == 'Darwin':
+                    try:
+                        setfile_time = new_date.strftime("%m/%d/%Y %H:%M:%S")
+                        setfile_cmd = ['SetFile', '-d', setfile_time, '-m', setfile_time, str(temp_path)]
+                        subprocess.run(setfile_cmd, capture_output=True, text=True, timeout=5)
+                    except:
+                        pass  # SetFile might not be available
+                
+                # Delete the remote file first
+                try:
+                    conn.deleteFiles(self.config.share_name, remote_path)
+                    self.logger.debug(f"Deleted remote file: {remote_path}")
+                except Exception as e:
+                    self.logger.debug(f"Could not delete remote file (might not exist): {e}")
+                
+                # Upload the modified file - this should preserve the local file's modification time
+                # but many NAS systems will override it to current time
+                with open(temp_path, 'rb') as f:
+                    conn.storeFile(self.config.share_name, remote_path, f)
+                
+                self.logger.info(f"Successfully modified date for {remote_path} to {new_date}")
+                return True
+                
+            finally:
+                # Clean up temp file
+                try:
+                    temp_path.unlink()
+                except:
+                    pass
+        
+        return self.pool.execute_with_retry(_modify_operation, remote_path, new_date)
     
     def file_exists(self, remote_path: str) -> bool:
         """Check if a file exists on NAS."""

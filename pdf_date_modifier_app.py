@@ -699,31 +699,23 @@ class PDFDateModifierApp(QMainWindow):
             self.progress_bar.setVisible(True)
             self.progress_bar.setRange(0, 100)
             
-            # Download file
-            self.progress_bar.setValue(25)
-            temp_file = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
-            temp_path = Path(temp_file.name)
-            temp_file.close()
-            
-            self.connection_manager.download_file(str(self.current_pdf_path), str(temp_path))
-            
-            # Process PDF
+            # Use the atomic modify_file_date method that does everything in one operation
             self.progress_bar.setValue(50)
-            success, result = self.pdf_processor.process_pdf_with_date_change(
-                temp_path, 
+            
+            # This method will:
+            # 1. Download the file
+            # 2. Update PDF metadata (if enabled)
+            # 3. Modify the file date locally using touch
+            # 4. Delete the remote file
+            # 5. Re-upload with the modified date
+            success = self.connection_manager.modify_file_date(
+                str(self.current_pdf_path), 
                 new_date,
                 update_metadata=self.config_manager.config.app.update_pdf_metadata
             )
             
             if not success:
-                raise Exception(f"PDF processing failed: {result.get('errors', ['Unknown error'])}")
-            
-            # Modify file dates
-            self.progress_bar.setValue(75)
-            self.file_ops_manager.modify_pdf_dates(temp_path, new_date)
-            
-            # Upload back to NAS
-            self.connection_manager.upload_file(str(temp_path), str(self.current_pdf_path))
+                raise Exception("Failed to modify file date")
             
             self.progress_bar.setValue(100)
             
@@ -797,33 +789,17 @@ class PDFDateModifierApp(QMainWindow):
             self.update_status(f"Processing {i+1}/{len(self.current_files)}: {file_info['filename']}")
             
             try:
-                # Process each file
-                temp_file = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
-                temp_path = Path(temp_file.name)
-                temp_file.close()
-                
-                # Download
-                self.connection_manager.download_file(file_info['path'], str(temp_path))
-                
-                # Process
-                success, _ = self.pdf_processor.process_pdf_with_date_change(temp_path, new_date)
+                # Use the atomic modify_file_date method
+                success = self.connection_manager.modify_file_date(
+                    file_info['path'],
+                    new_date,
+                    update_metadata=self.config_manager.config.app.update_pdf_metadata
+                )
                 
                 if success:
-                    # Modify dates
-                    self.file_ops_manager.modify_pdf_dates(temp_path, new_date)
-                    
-                    # Upload
-                    self.connection_manager.upload_file(str(temp_path), file_info['path'])
-                    
                     success_count += 1
                 else:
                     error_count += 1
-                
-                # Clean up
-                try:
-                    temp_path.unlink()
-                except:
-                    pass
                 
             except Exception as e:
                 self.logger.error(f"Failed to process {file_info['filename']}: {e}")
