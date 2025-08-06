@@ -495,12 +495,26 @@ class PDFDateModifierApp(QMainWindow):
             self.progress_bar.setVisible(True)
             self.progress_bar.setRange(0, 0)
             
-            # Get base path
+            # Get base path and folder path
             base_path = self.config_manager.config.server.base_path or "/"
+            folder_path = self.config_manager.config.server.folder_path if hasattr(self.config_manager.config.server, 'folder_path') else ""
+            
+            # Combine paths
+            if folder_path:
+                # Clean up paths - remove leading/trailing slashes from folder_path
+                folder_path = folder_path.strip('/')
+                if base_path.endswith('/'):
+                    full_path = base_path + folder_path
+                else:
+                    full_path = base_path + '/' + folder_path
+            else:
+                full_path = base_path
+            
+            self.logger.info(f"Loading files from path: {full_path}")
             
             # Submit task to thread manager
             def load_task():
-                return self.connection_manager.list_files(base_path, "*.pdf")
+                return self.connection_manager.list_files(full_path, "*.pdf")
             
             future = self.thread_manager.submit_simple_task(load_task)
             files = future.result(timeout=30)

@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, asdict, field
+from datetime import datetime
 import configparser
 from cryptography.fernet import Fernet
 import base64
@@ -24,6 +25,7 @@ class ServerConfig:
     password: str = ""
     share_name: str = ""
     base_path: str = "/"
+    folder_path: str = ""  # Optional folder path to append to base_path
     domain: str = ""
     port: int = 445
     timeout: int = 30
@@ -368,6 +370,7 @@ class ConfigurationManager:
             'password': server_config.password,
             'share_name': server_config.share_name,
             'base_path': server_config.base_path,
+            'folder_path': server_config.folder_path if hasattr(server_config, 'folder_path') else "",
             'timestamp': datetime.now().isoformat()
         }
         
@@ -398,7 +401,8 @@ class ConfigurationManager:
                     username=conn_data.get('username', ''),
                     password=conn_data.get('password', ''),
                     share_name=conn_data.get('share_name', ''),
-                    base_path=conn_data.get('base_path', '/')
+                    base_path=conn_data.get('base_path', '/'),
+                    folder_path=conn_data.get('folder_path', '')
                 )
                 connections.append(config)
             except Exception as e:

@@ -93,6 +93,10 @@ class ConnectionDialog(QDialog):
         self.base_path_input.setPlaceholderText("/Archive/Scanned")
         form_layout.addRow("Base Path:", self.base_path_input)
         
+        self.folder_path_input = QLineEdit()
+        self.folder_path_input.setPlaceholderText("Optional subfolder (e.g., 2024/January)")
+        form_layout.addRow("Folder Path:", self.folder_path_input)
+        
         self.domain_input = QLineEdit()
         self.domain_input.setPlaceholderText("Optional - usually blank")
         form_layout.addRow("Domain:", self.domain_input)
@@ -160,6 +164,7 @@ class ConnectionDialog(QDialog):
         self.password_input.setText(config.password)
         self.share_input.setText(config.share_name)
         self.base_path_input.setText(config.base_path)
+        self.folder_path_input.setText(config.folder_path if hasattr(config, 'folder_path') else "")
         self.domain_input.setText(config.domain)
         self.port_input.setValue(config.port)
         self.timeout_input.setValue(config.timeout)
@@ -185,6 +190,7 @@ class ConnectionDialog(QDialog):
             self.password_input.setText(conn.password)
             self.share_input.setText(conn.share_name)
             self.base_path_input.setText(conn.base_path)
+            self.folder_path_input.setText(conn.folder_path if hasattr(conn, 'folder_path') else "")
     
     def test_connection(self):
         """Test the current connection settings."""
@@ -242,6 +248,7 @@ class ConnectionDialog(QDialog):
         self.config_manager.config.server.password = config.password
         self.config_manager.config.server.share_name = config.share_name
         self.config_manager.config.server.base_path = self.base_path_input.text()
+        self.config_manager.config.server.folder_path = self.folder_path_input.text()
         self.config_manager.config.server.domain = config.domain
         self.config_manager.config.server.port = config.port
         self.config_manager.config.server.timeout = config.timeout
