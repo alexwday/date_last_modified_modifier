@@ -188,29 +188,37 @@ class NASConnection:
                 except:
                     pass  # File might not exist or permission issue
                 
-                # Upload the modified file with preserved timestamps
+                # Upload the modified file
                 with open(temp_modified_path, 'rb') as local_file:
-                    # Use storeFile with explicit timestamp
                     self.connection.storeFile(
                         self.share_name,
                         remote_path,
-                        local_file,
-                        write_time=timestamp
+                        local_file
                     )
                 
-                # Try to set the timestamp again after upload
+                # Try to set the timestamp after upload
                 try:
+                    # Use the basic setPathInfo with just last_write_time
                     self.connection.setPathInfo(
                         self.share_name,
                         remote_path,
-                        write_time=timestamp,
-                        access_time=timestamp,
-                        change_time=timestamp,
-                        creation_time=timestamp
+                        last_write_time=timestamp
                     )
-                except:
-                    # Some NAS devices don't support this, but that's okay
-                    pass
+                except Exception as e:
+                    # If setPathInfo fails, try using the SMB2 resetFileAttributes
+                    try:
+                        # Some NAS devices respond better to setting attributes
+                        file_obj = self.connection.getAttributes(self.share_name, remote_path)
+                        self.connection.resetFileAttributes(
+                            self.share_name,
+                            remote_path,
+                            file_attributes=file_obj.file_attributes,
+                            last_write_time=timestamp,
+                            last_access_time=timestamp
+                        )
+                    except:
+                        # If all methods fail, at least the PDF metadata is updated
+                        pass
                 
                 return True
                 
